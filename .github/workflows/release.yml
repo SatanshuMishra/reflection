@@ -35,6 +35,7 @@ jobs:
 
           cp .build/release/Reflection "$APP_DIR/MacOS/Reflection"
           cp SupportingFiles/Info.plist "$APP_DIR/Info.plist"
+          cp SupportingFiles/AppIcon.icns "$APP_DIR/Resources/AppIcon.icns"
 
           # Update version in Info.plist from tag
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.version }}" "$APP_DIR/Info.plist"
