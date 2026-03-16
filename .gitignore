@@ -29,6 +29,6 @@ Package.resolved
 # Build artifacts
 build/
 
-# Claude Code (keep rules, exclude local state)
-.claude/plans/
-.claude/settings.local.json
+# Editor and tool configuration (local state only)
+.claude/
+CLAUDE.md
