@@ -103,10 +103,20 @@ public final class MirrorSessionManager: ObservableObject {
             for await state in capture.stateStream {
                 guard let self else { return }
                 if case .failed(let error) = state {
-                    self.currentError = error
                     self.activeSessions.removeValue(forKey: deviceID)
                     self.stateObservationTasks.removeValue(forKey: deviceID)
                     self.logger.error("Capture failed for \(deviceID): \(error.localizedDescription)")
+
+                    if case .deviceDisconnected = error {
+                        // Post disconnect notification — AppDelegate handles prompt + window close
+                        NotificationCenter.default.post(
+                            name: .deviceDisconnected,
+                            object: nil,
+                            userInfo: ["deviceID": deviceID]
+                        )
+                    } else {
+                        self.currentError = error
+                    }
                 }
             }
         }

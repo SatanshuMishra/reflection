@@ -4,6 +4,7 @@ import AVFoundation
 
 extension Notification.Name {
     static let mirrorWindowClosed = Notification.Name("com.reflection.mirrorWindowClosed")
+    static let deviceDisconnected = Notification.Name("com.reflection.deviceDisconnected")
 }
 
 final class MirrorWindowController: NSWindowController, NSWindowDelegate {
