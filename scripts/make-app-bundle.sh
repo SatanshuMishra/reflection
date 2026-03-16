@@ -32,3 +32,19 @@ codesign --force --options runtime \
 
 echo "Created Reflection.app ($CONFIG)"
 echo "Run with: open Reflection.app"
+
+# Optionally create DMG with Applications symlink
+if [[ "${2:-}" == "--dmg" ]]; then
+    echo "Creating DMG..."
+    mkdir -p dmg-staging
+    cp -R Reflection.app dmg-staging/
+    ln -s /Applications dmg-staging/Applications
+
+    hdiutil create -volname "Reflection" \
+        -srcfolder dmg-staging \
+        -ov -format UDZO \
+        Reflection.dmg
+
+    rm -rf dmg-staging
+    echo "Created Reflection.dmg"
+fi
