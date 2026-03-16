@@ -20,8 +20,9 @@ mkdir -p "$APP_DIR/Resources"
 # Copy binary
 cp ".build/$CONFIG/Reflection" "$APP_DIR/MacOS/Reflection"
 
-# Copy Info.plist
+# Copy Info.plist and icon
 cp SupportingFiles/Info.plist "$APP_DIR/Info.plist"
+cp SupportingFiles/AppIcon.icns "$APP_DIR/Resources/AppIcon.icns"
 
 # Ad-hoc sign with entitlements and hardened runtime
 codesign --force --options runtime \
