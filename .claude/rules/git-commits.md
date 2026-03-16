@@ -35,6 +35,8 @@ Optional body explaining why, not what.
 4. Update `CFBundleShortVersionString` in `SupportingFiles/Info.plist`
 5. Commit: `chore: bump version to X.Y.Z`
 6. Create annotated tag: `git tag -a vX.Y.Z -m "vX.Y.Z: brief summary"`
+7. Push **both** commits and tag: `git push origin main && git push origin vX.Y.Z`
+   - Tags are NOT pushed by `git push` alone — the tag push triggers the release workflow
 
 **Batching:** Multiple commits may share a single version bump. When committing a batch of related changes, make all the code commits first, then do one version bump at the end using the highest-impact commit type from the batch.
 
