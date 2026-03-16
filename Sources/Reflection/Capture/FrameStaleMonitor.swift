@@ -51,6 +51,18 @@ public final class FrameStaleMonitor: @unchecked Sendable {
         return elapsed
     }
 
+    /// Atomically updates `isReceivingFrames` if the task has not been cancelled.
+    /// Returns `true` if the value actually changed, `false` otherwise.
+    /// Must be called from the monitoring task — uses `Task.isCancelled` internally.
+    private func tryUpdateReceiving(_ newValue: Bool) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !Task.isCancelled else { return false }
+        guard newValue != isReceivingFrames else { return false }
+        isReceivingFrames = newValue
+        return true
+    }
+
     /// Starts periodic monitoring of frame delivery.
     /// Emits changes to `statusStream` when receiving status changes.
     public func startMonitoring() {
@@ -63,8 +75,8 @@ public final class FrameStaleMonitor: @unchecked Sendable {
 
                 let elapsed = self.elapsedSinceLastFrame()
                 let receiving = elapsed <= self.threshold
-                if receiving != self.isReceivingFrames {
-                    self.isReceivingFrames = receiving
+
+                if self.tryUpdateReceiving(receiving) {
                     self.continuation.yield(receiving)
                 }
             }
@@ -75,8 +87,13 @@ public final class FrameStaleMonitor: @unchecked Sendable {
     public func stopMonitoring() {
         monitorTask?.cancel()
         monitorTask = nil
-        if isReceivingFrames {
+        lock.lock()
+        let wasReceiving = isReceivingFrames
+        if wasReceiving {
             isReceivingFrames = false
+        }
+        lock.unlock()
+        if wasReceiving {
             continuation.yield(false)
         }
     }
