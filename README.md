@@ -63,19 +63,19 @@ High-level overview of planned features and platform support. Items are roughly 
 
 ### Mirroring
 
-- [x] **USB mirroring** — Mirror iPad screen over a wired USB connection using CoreMediaIO
-- [ ] **Wireless mirroring** — Mirror iPad screen over Wi-Fi without a cable (AirPlay or custom protocol)
+- [x] **USB mirroring** — Mirror iPad screen over a wired USB connection
+- [ ] **Wireless mirroring** — Mirror iPad screen over Wi-Fi
 - [ ] **Audio passthrough** — Route iPad audio to the Mac alongside the video feed
-- [ ] **Multi-device mirroring** — Display multiple iPads simultaneously in separate windows
+- [ ] **Multi-device mirroring** — Display multiple iPads simultaneously
 
 ### Cross-Platform
 
-- [ ] **Windows support** — Native Windows build using platform-equivalent capture APIs
-- [ ] **Linux support** — Native Linux build with V4L2/PipeWire capture backend
+- [ ] **Windows support**
+- [ ] **Linux support**
 
 ### App Distribution
 
-- [ ] **Sparkle auto-updates** — In-app update notifications and one-click upgrades via [Sparkle](https://sparkle-project.org/) (if user demand warrants it)
+- [ ] **Sparkle auto-updates** — In-app update notifications and one-click upgrades (if user demand warrants it)
 
 ## Contributing
 
