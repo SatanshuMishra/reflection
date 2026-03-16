@@ -57,6 +57,36 @@ swift test
 
 Requires Xcode 16+ with Swift 6.0.
 
+## Roadmap
+
+High-level overview of planned features and platform support. Items are roughly ordered by priority.
+
+### Mirroring
+
+- [x] **USB mirroring** — Mirror iPad screen over a wired USB connection using CoreMediaIO
+- [ ] **Wireless mirroring** — Mirror iPad screen over Wi-Fi without a cable (AirPlay or custom protocol)
+- [ ] **Audio passthrough** — Route iPad audio to the Mac alongside the video feed
+- [ ] **Multi-device mirroring** — Display multiple iPads simultaneously in separate windows
+
+### Cross-Platform
+
+- [ ] **Windows support** — Native Windows build using platform-equivalent capture APIs
+- [ ] **Linux support** — Native Linux build with V4L2/PipeWire capture backend
+
+### App Distribution
+
+- [ ] **Sparkle auto-updates** — In-app update notifications and one-click upgrades via [Sparkle](https://sparkle-project.org/) (if user demand warrants it)
+
+## Contributing
+
+Contributions are welcome! Check out the [**Contributing Guide**](CONTRIBUTING.md) to get started.
+
+## Community
+
+- [**Contributing Guide**](CONTRIBUTING.md) — How to report bugs, suggest features, and submit code
+- [**Code of Conduct**](CODE_OF_CONDUCT.md) — Standards for community participation
+- [**Security Policy**](SECURITY.md) — How to report vulnerabilities privately
+
 ## License
 
-See [LICENSE](LICENSE) for details.
+[MIT License](LICENSE) — see the full text for details.
