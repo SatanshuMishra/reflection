@@ -257,7 +257,16 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
             return
         }
         logger.error("Capture runtime error: \(error.localizedDescription)")
-        updateState(.failed(.captureInterrupted(reason: error.localizedDescription)))
+
+        // Check if the device is still physically connected.
+        // If AVCaptureDevice can no longer find it, this is a USB disconnect.
+        if AVCaptureDevice(uniqueID: deviceID) == nil {
+            logger.info("Device \(self.deviceID) no longer found — treating as disconnect")
+            frameStaleMonitor.stopMonitoring()
+            updateState(.failed(.deviceDisconnected))
+        } else {
+            updateState(.failed(.captureInterrupted(reason: error.localizedDescription)))
+        }
     }
 
     private func handleInterruption(_ notification: Notification) {

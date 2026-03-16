@@ -13,6 +13,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDeviceDisconnected(_:)),
+            name: .deviceDisconnected,
+            object: nil
+        )
+
         Task {
             await performUpdateChecks()
         }
@@ -59,5 +66,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             self.windowControllers.removeValue(forKey: deviceID)
         }
+    }
+
+    @objc nonisolated private func handleDeviceDisconnected(_ notification: Notification) {
+        guard let deviceID = notification.userInfo?["deviceID"] as? String else { return }
+        Task { @MainActor in
+            self.showDisconnectPrompt(deviceID: deviceID)
+        }
+    }
+
+    private func showDisconnectPrompt(deviceID: String) {
+        let alert = NSAlert()
+        alert.messageText = "iPad Disconnected"
+        alert.informativeText = "The iPad was disconnected. Reconnect via USB to resume mirroring."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        // Use eject symbol — available on all macOS versions
+        alert.icon = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Disconnected")
+        alert.runModal()
+
+        // Close the mirror window after the user dismisses the prompt
+        closeMirrorWindow(deviceID: deviceID)
     }
 }
