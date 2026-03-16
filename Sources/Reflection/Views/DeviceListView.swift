@@ -9,7 +9,7 @@ struct DeviceListView: View {
         NavigationStack {
             Group {
                 if discovery.devices.isEmpty {
-                    EmptyStateView(onRefresh: { discovery.refreshDevices() })
+                    EmptyStateView()
                 } else {
                     List(discovery.devices) { device in
                         DeviceRowView(
@@ -25,7 +25,9 @@ struct DeviceListView: View {
                                 Task { await sessionManager.stopMirroring(deviceID: device.id) }
                             }
                         )
+                        .listRowBackground(Constants.appBackground)
                     }
+                    .scrollContentBackground(.hidden)
                 }
             }
             .toolbar {
@@ -34,11 +36,29 @@ struct DeviceListView: View {
                         discovery.refreshDevices()
                     } label: {
                         Image(systemName: "arrow.clockwise")
+                            .rotationEffect(.degrees(discovery.isRefreshing ? 360 : 0))
+                            .animation(
+                                discovery.isRefreshing
+                                    ? .linear(duration: 0.6).repeatForever(autoreverses: false)
+                                    : .default,
+                                value: discovery.isRefreshing
+                            )
                     }
+                    .disabled(discovery.isRefreshing)
                     .help("Refresh device list")
                 }
             }
         }
+        .background(Constants.appBackground)
+        .background(
+            WindowAccessor { window in
+                window.titlebarAppearsTransparent = true
+                window.backgroundColor = Constants.appBackgroundNS
+                window.isMovableByWindowBackground = true
+                window.styleMask.insert(.fullSizeContentView)
+                window.titlebarSeparatorStyle = .none
+            }
+        )
         .frame(minWidth: 350, minHeight: 200)
         .alert(
             "Error",

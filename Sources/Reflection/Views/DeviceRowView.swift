@@ -13,6 +13,7 @@ struct DeviceRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                     .font(.headline)
+                    .foregroundStyle(.white)
                 Text(device.modelID)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -27,8 +28,7 @@ struct DeviceRowView: View {
                     onMirror()
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(isMirroring ? .red : .accentColor)
+            .buttonStyle(FlatButtonStyle(color: isMirroring ? .red : .accentColor))
             .animation(.easeInOut(duration: Constants.animationDuration), value: isMirroring)
         }
         .padding(.vertical, 4)
