@@ -39,17 +39,25 @@ final class FrameStaleMonitorTests: XCTestCase {
     }
 
     func testFrameResumesAfterStale() async {
-        let monitor = FrameStaleMonitor(threshold: 0.2, checkIntervalNanos: 50_000_000)
+        // Use a long threshold so the resumed frame stays fresh during the assertion window.
+        // Previous versions used threshold < sleep-after-resume, causing the frame
+        // to go stale again before the assertion ran.
+        let monitor = FrameStaleMonitor(threshold: 2.0, checkIntervalNanos: 100_000_000)
         monitor.recordFrame()
         monitor.startMonitoring()
 
-        // Let it go stale
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        // Wait for initial check to confirm receiving
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(monitor.isReceivingFrames)
+
+        // Let it go stale (wait well past the 2s threshold)
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
         XCTAssertFalse(monitor.isReceivingFrames)
 
-        // Record a new frame — should resume
+        // Record a new frame — should resume on next check cycle.
+        // Sleep (400ms) must be shorter than threshold (2s) so frame stays fresh.
         monitor.recordFrame()
-        try? await Task.sleep(nanoseconds: 150_000_000)
+        try? await Task.sleep(nanoseconds: 400_000_000)
         XCTAssertTrue(monitor.isReceivingFrames)
 
         monitor.stopMonitoring()
