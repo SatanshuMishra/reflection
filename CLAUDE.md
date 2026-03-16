@@ -89,4 +89,4 @@ Code signing + notarization run automatically when Apple Developer secrets are c
 
 ## Version
 
-Current: **v1.0.0** — See `.claude/rules/versioning.md` for SemVer policy.
+Current: **v1.1.0** — See `.claude/rules/versioning.md` for SemVer policy.
