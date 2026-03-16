@@ -31,17 +31,19 @@ final class FrameStaleMonitorTests: XCTestCase {
     }
 
     func testFrameBecomesStaleAfterThreshold() async {
-        let monitor = FrameStaleMonitor(threshold: 0.5, checkIntervalNanos: 100_000_000)
+        // Use a long threshold (3s) so the initial assertion sleep (800ms) is well within bounds.
+        // CI runners can add 200-300ms jitter to Task.sleep, so wide margins are essential.
+        let monitor = FrameStaleMonitor(threshold: 3.0, checkIntervalNanos: 100_000_000)
         monitor.recordFrame()
         monitor.startMonitoring()
 
-        // Wait for initial check (400ms < 0.5s threshold, so frame is still fresh)
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        // Wait for several check cycles (800ms, well under 3s threshold)
+        try? await Task.sleep(nanoseconds: 800_000_000)
         XCTAssertTrue(monitor.isReceivingFrames)
 
-        // Now wait well past the threshold without recording frames
-        // 0.5s threshold + generous buffer = 1s additional wait
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        // Now wait well past the 3s threshold without recording frames
+        // 3s threshold + 1.5s buffer = 4.5s total from last frame
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
         XCTAssertFalse(monitor.isReceivingFrames)
 
         monitor.stopMonitoring()
@@ -71,11 +73,14 @@ final class FrameStaleMonitorTests: XCTestCase {
     }
 
     func testStopMonitoringResetsState() async {
-        let monitor = FrameStaleMonitor(threshold: 2.0, checkIntervalNanos: 100_000_000)
+        // Use long threshold and generous sleep to guarantee the monitor task
+        // completes multiple check cycles and sets isReceivingFrames = true.
+        let monitor = FrameStaleMonitor(threshold: 5.0, checkIntervalNanos: 100_000_000)
         monitor.recordFrame()
         monitor.startMonitoring()
 
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        // Wait 1s — enough for ~10 check cycles even with CI jitter
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
         XCTAssertTrue(monitor.isReceivingFrames)
 
         monitor.stopMonitoring()
@@ -83,13 +88,14 @@ final class FrameStaleMonitorTests: XCTestCase {
     }
 
     func testStatusStreamEmitsChanges() async {
-        let monitor = FrameStaleMonitor(threshold: 0.5, checkIntervalNanos: 100_000_000)
+        // Use a moderate threshold (2s) and wait well past it (4s total)
+        // to ensure the monitor transitions from receiving → stale.
+        let monitor = FrameStaleMonitor(threshold: 2.0, checkIntervalNanos: 100_000_000)
         monitor.recordFrame()
         monitor.startMonitoring()
 
-        // Wait long enough for it to go true then false
-        // (frame at t=0, fresh for 0.5s, then stale — wait 1.5s total)
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        // Wait well past the 2s threshold (4s total from frame recording)
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
 
         // After the threshold, the monitor should have transitioned:
         // true (frames recent) → false (stale)
