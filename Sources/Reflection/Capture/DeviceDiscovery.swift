@@ -32,6 +32,7 @@ private func isIOSDevice(_ device: AVCaptureDevice) -> Bool {
 public final class DeviceDiscovery: ObservableObject {
     @Published public private(set) var devices: [DeviceModel] = []
     @Published public private(set) var cameraAuthorized = false
+    @Published public private(set) var isRefreshing = false
 
     private var discoverySession: AVCaptureDevice.DiscoverySession?
     private var observation: NSKeyValueObservation?
@@ -62,11 +63,18 @@ public final class DeviceDiscovery: ObservableObject {
             logger.warning("Cannot refresh: camera not authorized.")
             return
         }
+        isRefreshing = true
         observation?.invalidate()
         observation = nil
         discoverySession = nil
         beginDeviceDiscovery()
         logger.info("Manual device refresh completed. Found \(self.devices.count) device(s).")
+
+        // Keep the spinner visible long enough for the user to notice
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            self?.isRefreshing = false
+        }
     }
 
     public func stopDiscovery() {
