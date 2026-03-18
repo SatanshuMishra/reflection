@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private weak var appSettings: AppSettings?
     private var onMirror: ((DeviceModel) -> Void)?
+    private var openMainWindow: (() -> Void)?
 
     /// Device IDs with open mirror windows, for window identification.
     var mirrorWindowDeviceIDs: [String] { Array(windowControllers.keys) }
@@ -41,12 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func configure(
         appSettings: AppSettings,
         sessionManager: MirrorSessionManager,
-        onMirror: @escaping (DeviceModel) -> Void
+        onMirror: @escaping (DeviceModel) -> Void,
+        openMainWindow: @escaping () -> Void
     ) {
         // Guard against duplicate configuration
         guard self.appSettings == nil else { return }
         self.appSettings = appSettings
         self.onMirror = onMirror
+        self.openMainWindow = openMainWindow
 
         let menuBarContent = MenuBarView(
             discovery: sessionManager.discovery,
@@ -93,12 +96,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             NSApp.activate(ignoringOtherApps: true)
         }
+
+        // Try to bring an existing normal window to front
         for window in NSApp.windows {
             if window.level == .normal && window.canBecomeKey {
                 window.makeKeyAndOrderFront(nil)
                 return
             }
         }
+
+        // No window found — SwiftUI destroyed it on close.
+        // Use the captured openWindow(id:) action from SwiftUI
+        // environment to create a new WindowGroup window.
+        openMainWindow?()
     }
 
     func openMirrorWindow(session: AVCaptureSession, deviceID: String, deviceName: String, frameStatusStream: AsyncStream<Bool>) {
