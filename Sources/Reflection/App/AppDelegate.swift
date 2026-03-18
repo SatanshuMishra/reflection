@@ -1,10 +1,17 @@
 import AppKit
 import AVFoundation
+import Combine
+import SwiftUI
 import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [String: MirrorWindowController] = [:]
+    private let statusBarController = StatusBarController()
+    private var cancellables = Set<AnyCancellable>()
+
+    private weak var appSettings: AppSettings?
+    private var onMirror: ((DeviceModel) -> Void)?
 
     /// Device IDs with open mirror windows, for window identification.
     var mirrorWindowDeviceIDs: [String] { Array(windowControllers.keys) }
@@ -29,20 +36,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func performUpdateChecks() async {
-        let checker = UpdateChecker()
+    /// Called from ReflectionApp to share state. Sets up the menu bar
+    /// item and observes background-mode preference.
+    func configure(
+        appSettings: AppSettings,
+        sessionManager: MirrorSessionManager,
+        onMirror: @escaping (DeviceModel) -> Void
+    ) {
+        // Guard against duplicate configuration
+        guard self.appSettings == nil else { return }
+        self.appSettings = appSettings
+        self.onMirror = onMirror
 
-        // Show What's New if this is the first launch of a new version
-        if checker.isFirstLaunchOfNewVersion {
-            if let notes = await checker.fetchReleaseNotes(for: checker.currentVersion) {
-                showWhatsNewAlert(version: checker.currentVersion, notes: notes)
+        let menuBarContent = MenuBarView(
+            discovery: sessionManager.discovery,
+            sessionManager: sessionManager,
+            onMirror: { [weak self] device in self?.onMirror?(device) },
+            onShowMainWindow: { [weak self] in self?.showMainWindow() }
+        )
+        statusBarController.configure(
+            appSettings: appSettings,
+            contentView: menuBarContent
+        )
+
+        // When window closes and runInBackground is on, hide from dock
+        NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
+            .sink { [weak self] notification in
+                guard let self,
+                      let window = notification.object as? NSWindow,
+                      window.level == .normal,
+                      self.appSettings?.runInBackground == true else { return }
+                // Check if this was the last normal window
+                let remainingNormal = NSApp.windows.filter {
+                    $0 != window && $0.level == .normal && $0.isVisible
+                }
+                if remainingNormal.isEmpty {
+                    NSApp.setActivationPolicy(.accessory)
+                }
             }
-            UpdateChecker.lastSeenVersion = checker.currentVersion
-        }
+            .store(in: &cancellables)
+    }
 
-        // Check if a newer version is available
-        if let update = await checker.checkForUpdate() {
-            showUpdateAlert(info: update)
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showMainWindow()
+        }
+        return true
+    }
+
+    // MARK: - Window Management
+
+    func showMainWindow() {
+        NSApp.setActivationPolicy(.regular)
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        for window in NSApp.windows {
+            if window.level == .normal && window.canBecomeKey {
+                window.makeKeyAndOrderFront(nil)
+                return
+            }
         }
     }
 
@@ -64,6 +119,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowControllers[deviceID]?.close()
         windowControllers.removeValue(forKey: deviceID)
     }
+
+    // MARK: - Update Checker
+
+    private func performUpdateChecks() async {
+        let checker = UpdateChecker()
+
+        // Show What's New if this is the first launch of a new version
+        if checker.isFirstLaunchOfNewVersion {
+            if let notes = await checker.fetchReleaseNotes(for: checker.currentVersion) {
+                showWhatsNewAlert(version: checker.currentVersion, notes: notes)
+            }
+            UpdateChecker.lastSeenVersion = checker.currentVersion
+        }
+
+        // Check if a newer version is available
+        if let update = await checker.checkForUpdate() {
+            showUpdateAlert(info: update)
+        }
+    }
+
+    // MARK: - Notification Handlers
 
     @objc nonisolated private func handleMirrorWindowClosed(_ notification: Notification) {
         guard let deviceID = notification.userInfo?["deviceID"] as? String else { return }
