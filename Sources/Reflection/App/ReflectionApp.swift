@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
 
+/// Identifier for the main device-list window.
+/// Used with `openWindow(id:)` to recreate it after background-mode close.
+private let mainWindowID = "main"
+
 private func debugLog(_ message: String) {
     let logFile = "/tmp/reflection_debug.log"
     let timestamp = ISO8601DateFormatter().string(from: Date())
@@ -25,26 +29,13 @@ struct ReflectionApp: App {
     @StateObject private var appSettings = AppSettings()
 
     var body: some Scene {
-        WindowGroup {
-            DeviceListView(
+        WindowGroup(id: mainWindowID) {
+            MainContentView(
+                appDelegate: appDelegate,
                 sessionManager: sessionManager,
-                discovery: sessionManager.discovery,
                 appSettings: appSettings,
-                onMirror: { device in
-                    openMirrorWindow(for: device)
-                }
+                onMirror: { device in openMirrorWindow(for: device) }
             )
-            .task {
-                await sessionManager.startDiscovery()
-            }
-            .task {
-                // Give AppDelegate access to shared state for menu bar management
-                appDelegate.configure(
-                    appSettings: appSettings,
-                    sessionManager: sessionManager,
-                    onMirror: { device in openMirrorWindow(for: device) }
-                )
-            }
         }
         .defaultSize(width: 400, height: 300)
     }
@@ -66,5 +57,45 @@ struct ReflectionApp: App {
             deviceName: device.name,
             frameStatusStream: capture.frameStatusStream
         )
+    }
+}
+
+// MARK: - Main Content View
+
+/// Wraps DeviceListView to capture `@Environment(\.openWindow)`,
+/// which is only available inside a View (not in an App struct).
+/// Passes the captured action to AppDelegate so it can recreate
+/// the window from AppKit code (menu bar "Show Reflection").
+private struct MainContentView: View {
+    let appDelegate: AppDelegate
+    @ObservedObject var sessionManager: MirrorSessionManager
+    @ObservedObject var appSettings: AppSettings
+    let onMirror: (DeviceModel) -> Void
+
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        DeviceListView(
+            sessionManager: sessionManager,
+            discovery: sessionManager.discovery,
+            appSettings: appSettings,
+            onMirror: onMirror
+        )
+        .task {
+            await sessionManager.startDiscovery()
+        }
+        .onAppear {
+            // Capture the SwiftUI openWindow action for AppDelegate.
+            // This is the only reliable way to create a new WindowGroup
+            // window from AppKit code (e.g., NSStatusItem popover).
+            appDelegate.configure(
+                appSettings: appSettings,
+                sessionManager: sessionManager,
+                onMirror: onMirror,
+                openMainWindow: { [openWindow] in
+                    openWindow(id: mainWindowID)
+                }
+            )
+        }
     }
 }
