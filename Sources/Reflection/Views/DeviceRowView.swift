@@ -13,7 +13,7 @@ struct DeviceRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
                 Text(device.modelID)
                     .font(.caption)
                     .foregroundStyle(.secondary)
