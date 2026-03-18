@@ -10,7 +10,7 @@ struct EmptyStateView: View {
             Text("No iPads Detected")
                 .font(.title2)
                 .fontWeight(.semibold)
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
 
             Text("Connect your iPad via USB cable to begin mirroring.\nIf already connected, tap the refresh button above.")
                 .font(.body)
@@ -20,6 +20,5 @@ struct EmptyStateView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Constants.appBackground)
     }
 }
