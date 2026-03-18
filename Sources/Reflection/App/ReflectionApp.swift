@@ -22,12 +22,14 @@ private func debugLog(_ message: String) {
 struct ReflectionApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var sessionManager = MirrorSessionManager()
+    @StateObject private var appSettings = AppSettings()
 
     var body: some Scene {
         WindowGroup {
             DeviceListView(
                 sessionManager: sessionManager,
                 discovery: sessionManager.discovery,
+                appSettings: appSettings,
                 onMirror: { device in
                     openMirrorWindow(for: device)
                 }
