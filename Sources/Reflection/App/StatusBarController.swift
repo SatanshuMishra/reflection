@@ -81,7 +81,23 @@ final class StatusBarController: NSObject {
 
     private func openPopover() {
         guard let button = statusItem?.button else { return }
+
+        // Sync appearance — NSPopover windows don't inherit NSApp.appearance.
+        popover.appearance = NSApp.effectiveAppearance
+
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+
+        // Activate the app and make the popover's window key.
+        // Without this, background-mode apps (.accessory policy) render
+        // the popover in the "inactive" window style (lighter/washed out).
+        // Clicking inside would activate it, but users see the flash.
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
+
         installEventMonitor()
     }
 
