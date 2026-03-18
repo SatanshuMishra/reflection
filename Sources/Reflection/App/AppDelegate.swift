@@ -55,7 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             discovery: sessionManager.discovery,
             sessionManager: sessionManager,
             onMirror: { [weak self] device in self?.onMirror?(device) },
-            onShowMainWindow: { [weak self] in self?.showMainWindow() }
+            onShowMainWindow: { [weak self] in self?.showMainWindow() },
+            onShowSettings: { [weak self] in self?.showSettings() }
         )
         statusBarController.configure(
             appSettings: appSettings,
@@ -109,6 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Use the captured openWindow(id:) action from SwiftUI
         // environment to create a new WindowGroup window.
         openMainWindow?()
+    }
+
+    /// Opens the main window and navigates to the Settings page.
+    func showSettings() {
+        appSettings?.navigateToSettings = true
+        showMainWindow()
     }
 
     func openMirrorWindow(session: AVCaptureSession, deviceID: String, deviceName: String, frameStatusStream: AsyncStream<Bool>) {
