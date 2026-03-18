@@ -37,6 +37,14 @@ struct ReflectionApp: App {
             .task {
                 await sessionManager.startDiscovery()
             }
+            .task {
+                // Give AppDelegate access to shared state for menu bar management
+                appDelegate.configure(
+                    appSettings: appSettings,
+                    sessionManager: sessionManager,
+                    onMirror: { device in openMirrorWindow(for: device) }
+                )
+            }
         }
         .defaultSize(width: 400, height: 300)
     }
