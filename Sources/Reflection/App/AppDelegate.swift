@@ -1,9 +1,13 @@
 import AppKit
 import AVFoundation
+import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [String: MirrorWindowController] = [:]
+
+    /// Device IDs with open mirror windows, for window identification.
+    var mirrorWindowDeviceIDs: [String] { Array(windowControllers.keys) }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NotificationCenter.default.addObserver(
@@ -81,11 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = "The iPad was disconnected. Reconnect via USB to resume mirroring."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        // Use eject symbol — available on all macOS versions
         alert.icon = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Disconnected")
         alert.runModal()
 
-        // Close the mirror window after the user dismisses the prompt
         closeMirrorWindow(deviceID: deviceID)
     }
 }
