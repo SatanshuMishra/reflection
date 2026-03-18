@@ -39,6 +39,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(runInBackground, forKey: Constants.runInBackgroundKey) }
     }
 
+    /// Transient flag: when set to `true`, DeviceListView navigates
+    /// to the Settings page. Reset to `false` after consumption.
+    /// Not persisted — purely an in-memory navigation trigger.
+    @Published var navigateToSettings = false
+
     @Published var launchAtLogin: Bool {
         didSet {
             guard !isSyncingLoginItem else { return }

@@ -17,6 +17,13 @@ struct DeviceListView: View {
                     devicePage
                 }
             }
+            .onReceive(appSettings.$navigateToSettings) { shouldNavigate in
+                guard shouldNavigate else { return }
+                appSettings.navigateToSettings = false
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showingSettings = true
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .automatic) {
                     if showingSettings {
