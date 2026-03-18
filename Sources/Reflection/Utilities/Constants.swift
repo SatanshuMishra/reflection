@@ -14,4 +14,10 @@ enum Constants {
     static let animationDuration: TimeInterval = 0.3
     static let frameStaleThreshold: TimeInterval = 1.0
     static let frameCheckIntervalNanos: UInt64 = 500_000_000
+
+    // MARK: - Settings Keys
+
+    static let appearanceKey = "com.reflection.appearance"
+    static let runInBackgroundKey = "com.reflection.runInBackground"
+    static let launchAtLoginKey = "com.reflection.launchAtLogin"
 }

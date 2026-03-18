@@ -7,4 +7,5 @@ extension Logger {
     static let discovery = Logger(subsystem: subsystem, category: "Discovery")
     static let session = Logger(subsystem: subsystem, category: "Session")
     static let ui = Logger(subsystem: subsystem, category: "UI")
+    static let settings = Logger(subsystem: subsystem, category: "Settings")
 }
