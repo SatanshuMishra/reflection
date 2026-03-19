@@ -35,6 +35,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(Constants.appBackground)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
