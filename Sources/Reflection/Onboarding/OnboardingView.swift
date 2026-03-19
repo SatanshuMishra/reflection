@@ -11,9 +11,11 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var currentPage = 0
+    @State private var currentStep = 0
+    @State private var isVisible = false
     @State private var hostWindowReference = WeakWindowReference()
 
-    private let pageCount = Constants.onboardingPageSizes.count
+    private let stepCount = 3
 
     /// Slide-right-in / slide-left-out transition for page changes.
     private var pageTransition: AnyTransition {
@@ -38,15 +40,21 @@ struct OnboardingView: View {
                     .transition(pageTransition)
 
                 default:
-                    PermissionPage {
-                        onComplete()
-                    }
+                    PermissionPage(
+                        onComplete: { onComplete() },
+                        onAuthorized: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                currentStep = 2
+                            }
+                        }
+                    )
                     .transition(pageTransition)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.vertical, Constants.onboardingVerticalPadding)
+        .opacity(isVisible ? 1 : 0)
         .background(
             Constants.appBackground
                 .ignoresSafeArea(.container, edges: .top)
@@ -60,26 +68,31 @@ struct OnboardingView: View {
                 }
             }
         )
+        .onAppear {
+            withAnimation(.easeOut(duration: 3.0)) {
+                isVisible = true
+            }
+        }
     }
 
     // MARK: - Pill Step Indicator
 
     private var pageIndicator: some View {
         HStack(spacing: 6) {
-            ForEach(0..<pageCount, id: \.self) { index in
+            ForEach(0..<stepCount, id: \.self) { index in
                 Capsule()
                     .fill(
-                        index == currentPage
+                        index == currentStep
                             ? Color.primary
                             : Color.secondary.opacity(0.3)
                     )
                     .frame(
-                        width: index == currentPage
+                        width: index == currentStep
                             ? Constants.onboardingPillWidth
                             : Constants.onboardingDotSize,
                         height: Constants.onboardingDotSize
                     )
-                    .animation(.easeInOut(duration: 0.25), value: currentPage)
+                    .animation(.easeInOut(duration: 0.25), value: currentStep)
             }
         }
     }
@@ -88,9 +101,10 @@ struct OnboardingView: View {
 
     private func advancePage() {
         let nextPage = currentPage + 1
-        guard nextPage < pageCount else { return }
+        guard nextPage < Constants.onboardingPageSizes.count else { return }
         withAnimation(.easeInOut(duration: 0.35)) {
             currentPage = nextPage
+            currentStep = nextPage
         }
         guard Constants.onboardingPageSizes.indices.contains(nextPage) else { return }
         resizeWindow(to: Constants.onboardingPageSizes[nextPage])
