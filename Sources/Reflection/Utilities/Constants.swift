@@ -2,9 +2,14 @@ import Foundation
 import SwiftUI
 
 enum Constants {
-    /// App background — near-black (#0d0f11)
-    static let appBackground = Color(red: 13 / 255, green: 15 / 255, blue: 17 / 255)
-    static let appBackgroundNS = NSColor(red: 13 / 255, green: 15 / 255, blue: 17 / 255, alpha: 1)
+    // MARK: - Window Identifiers
+
+    static let mainWindowID = "main"
+    static let onboardingWindowID = "onboarding"
+
+    /// App background — near-black (#121215)
+    static let appBackground = Color(red: 18 / 255, green: 18 / 255, blue: 21 / 255)
+    static let appBackgroundNS = NSColor(red: 18 / 255, green: 18 / 255, blue: 21 / 255, alpha: 1)
     static let defaultFrameRate: Double = 60.0
     static let windowMinWidth: CGFloat = 320
     static let windowMinHeight: CGFloat = 240
@@ -20,4 +25,28 @@ enum Constants {
     static let appearanceKey = "com.reflection.appearance"
     static let runInBackgroundKey = "com.reflection.runInBackground"
     static let launchAtLoginKey = "com.reflection.launchAtLogin"
+    static let onboardingCompletedKey = "com.reflection.onboardingCompleted"
+
+    // MARK: - Onboarding Window Sizes
+
+    static let onboardingWelcomeSize = CGSize(width: 800, height: 600)
+    static let onboardingPermissionSize = CGSize(width: 800, height: 600)
+    static let onboardingPageSizes: [CGSize] = [
+        onboardingWelcomeSize, onboardingPermissionSize,
+    ]
+
+    /// Corner radius for the chromeless onboarding window.
+    static let onboardingCornerRadius: CGFloat = 10
+
+    /// Vertical padding inside the onboarding window (top and bottom).
+    static let onboardingVerticalPadding: CGFloat = 24
+
+    /// Width of the active pill in the step indicator.
+    static let onboardingPillWidth: CGFloat = 24
+
+    /// Size of inactive dots in the step indicator.
+    static let onboardingDotSize: CGFloat = 8
+
+    /// Main app default window size (post-onboarding).
+    static let mainWindowSize = CGSize(width: 400, height: 300)
 }
