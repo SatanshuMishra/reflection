@@ -42,7 +42,7 @@ enum Constants {
     static let onboardingVerticalPadding: CGFloat = 24
 
     /// Width of the active pill in the step indicator.
-    static let onboardingPillWidth: CGFloat = 24
+    static let onboardingPillWidth: CGFloat = 36
 
     /// Size of inactive dots in the step indicator.
     static let onboardingDotSize: CGFloat = 8
