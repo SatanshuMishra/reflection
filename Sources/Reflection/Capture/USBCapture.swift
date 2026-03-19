@@ -61,7 +61,7 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
         debugLog("[USBCapture] startCapture for device \(deviceID)")
         updateState(.starting)
 
-        try await checkPermission()
+        try checkPermission()
         debugLog("[USBCapture] Permission OK")
 
         let session = try configureSession()
@@ -107,15 +107,14 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
 
     // MARK: - Permission
 
-    private func checkPermission() async throws {
+    /// Checks camera authorization status without triggering the system permission dialog.
+    /// Permission must be granted through PermissionPage before capture can start.
+    private func checkPermission() throws {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             return
         case .notDetermined:
-            let granted = await AVCaptureDevice.requestAccess(for: .video)
-            if !granted {
-                throw CaptureError.permissionDenied
-            }
+            throw CaptureError.permissionNotDetermined
         case .denied, .restricted:
             throw CaptureError.permissionDenied
         @unknown default:

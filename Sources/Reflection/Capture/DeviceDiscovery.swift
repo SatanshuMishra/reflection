@@ -43,7 +43,12 @@ public final class DeviceDiscovery: ObservableObject {
     public func startDiscovery() async {
         debugLog("[Discovery] Starting discovery...")
         enableIOSDeviceDiscovery()
-        await requestCameraAccess()
+        checkCameraAuthorizationStatus()
+
+        guard cameraAuthorized else {
+            debugLog("[Discovery] Camera not authorized — skipping device scan.")
+            return
+        }
 
         // CoreMediaIO needs time to register iOS devices after the property is set.
         // Wait before creating the discovery session.
@@ -87,17 +92,17 @@ public final class DeviceDiscovery: ObservableObject {
 
     // MARK: - Camera Permission
 
-    private func requestCameraAccess() async {
+    /// Reads camera authorization status without triggering the system permission dialog.
+    /// The dialog is only shown from PermissionPage when the user clicks "Grant Permission".
+    private func checkCameraAuthorizationStatus() {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
         case .authorized:
             cameraAuthorized = true
             logger.info("Camera already authorized.")
         case .notDetermined:
-            logger.info("Requesting camera access...")
-            let granted = await AVCaptureDevice.requestAccess(for: .video)
-            cameraAuthorized = granted
-            logger.info("Camera access \(granted ? "granted" : "denied").")
+            cameraAuthorized = false
+            logger.info("Camera permission not yet requested — skipping discovery.")
         case .denied, .restricted:
             cameraAuthorized = false
             logger.warning("Camera access denied/restricted.")
