@@ -7,6 +7,7 @@ struct DeviceListView: View {
     let onMirror: (DeviceModel) -> Void
 
     @State private var showingSettings = false
+    @State private var refreshRotation: Double = 0
 
     var body: some View {
         NavigationStack {
@@ -38,19 +39,25 @@ struct DeviceListView: View {
                     } else {
                         HStack(spacing: 8) {
                             Button {
+                                guard !discovery.isRefreshing else { return }
                                 discovery.refreshDevices()
                             } label: {
                                 Image(systemName: "arrow.clockwise")
-                                    .rotationEffect(.degrees(discovery.isRefreshing ? 360 : 0))
-                                    .animation(
-                                        discovery.isRefreshing
-                                            ? .linear(duration: 0.6).repeatForever(autoreverses: false)
-                                            : .default,
-                                        value: discovery.isRefreshing
-                                    )
+                                    .fontWeight(.medium)
+                                    .rotationEffect(.degrees(refreshRotation))
                             }
-                            .disabled(discovery.isRefreshing)
                             .help("Refresh device list")
+                            .onChange(of: discovery.isRefreshing) { isRefreshing in
+                                if isRefreshing {
+                                    withAnimation(.linear(duration: 0.6).repeatForever(autoreverses: false)) {
+                                        refreshRotation += 360
+                                    }
+                                } else {
+                                    withAnimation(.easeOut(duration: 0.3)) {
+                                        refreshRotation = 0
+                                    }
+                                }
+                            }
 
                             Button {
                                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -66,6 +73,8 @@ struct DeviceListView: View {
                 }
             }
         }
+        .background(Constants.appBackground)
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .frame(minWidth: 350, minHeight: 200)
         .alert(
             "Error",
