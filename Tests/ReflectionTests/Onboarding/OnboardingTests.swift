@@ -38,10 +38,6 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(Constants.mainWindowID, "main")
     }
 
-    func testOnboardingWindowIDHasExpectedValue() {
-        XCTAssertEqual(Constants.onboardingWindowID, "onboarding")
-    }
-
     func testAppBackgroundColorIsCorrect() {
         // #121215 = RGB(18, 18, 21)
         let nsColor = Constants.appBackgroundNS

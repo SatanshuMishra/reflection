@@ -108,21 +108,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
 
-        let targetWindowID = UserDefaults.standard.bool(forKey: Constants.onboardingCompletedKey)
-            ? Constants.mainWindowID
-            : Constants.onboardingWindowID
-
-        // Prefer focusing an existing primary window and avoid picking
-        // unrelated windows (for example, a mirror window).
-        if let targetWindow = NSApp.windows.first(where: {
-            $0.identifier?.rawValue == targetWindowID
+        if let window = NSApp.windows.first(where: {
+            $0.identifier?.rawValue == Constants.mainWindowID
         }) {
-            targetWindow.makeKeyAndOrderFront(nil)
+            window.makeKeyAndOrderFront(nil)
             return
         }
 
-        // No primary window found — recreate it via SwiftUI's openWindow.
-        openWindowAction?(targetWindowID)
+        openWindowAction?(Constants.mainWindowID)
     }
 
     /// Opens the main window and navigates to the Settings page.
