@@ -8,6 +8,7 @@ import SwiftUI
 /// This is the final onboarding page — no separate "Ready" page.
 struct PermissionPage: View {
     let onComplete: () -> Void
+    var onAuthorized: () -> Void = {}
 
     @State private var permissionStatus: AVAuthorizationStatus = .notDetermined
 
@@ -53,12 +54,18 @@ struct PermissionPage: View {
         .padding(.vertical, 24)
         .onAppear {
             permissionStatus = AVCaptureDevice.authorizationStatus(for: .video)
+            if permissionStatus == .authorized {
+                onAuthorized()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             let currentStatus = AVCaptureDevice.authorizationStatus(for: .video)
             if currentStatus != permissionStatus {
                 withAnimation {
                     permissionStatus = currentStatus
+                }
+                if currentStatus == .authorized {
+                    onAuthorized()
                 }
             }
         }
@@ -149,6 +156,9 @@ struct PermissionPage: View {
                     let granted = await AVCaptureDevice.requestAccess(for: .video)
                     withAnimation {
                         permissionStatus = granted ? .authorized : .denied
+                    }
+                    if granted {
+                        onAuthorized()
                     }
                 }
             } label: {
