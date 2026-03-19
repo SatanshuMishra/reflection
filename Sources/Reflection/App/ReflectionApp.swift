@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import SwiftUI
 
@@ -19,15 +20,6 @@ private func debugLog(_ message: String) {
     }
 }
 
-@MainActor
-private func focusWindowIfAvailable(windowID: String) -> Bool {
-    guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == windowID }) else {
-        return false
-    }
-    window.makeKeyAndOrderFront(nil)
-    return true
-}
-
 @main
 struct ReflectionApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -35,45 +27,20 @@ struct ReflectionApp: App {
     @StateObject private var appSettings = AppSettings()
 
     init() {
-        let shouldResetOnboarding = ProcessInfo.processInfo.arguments.contains("-resetOnboarding")
-
-        if shouldResetOnboarding {
+        if ProcessInfo.processInfo.arguments.contains("-resetOnboarding") {
             UserDefaults.standard.set(false, forKey: Constants.onboardingCompletedKey)
         }
     }
 
     var body: some Scene {
-        mainWindowScene
-        onboardingWindowScene
-    }
-
-    @SceneBuilder
-    private var mainWindowScene: some Scene {
         Window("Reflection", id: Constants.mainWindowID) {
-            MainWindowRootView(
+            RootView(
                 appDelegate: appDelegate,
                 sessionManager: sessionManager,
                 appSettings: appSettings,
                 onMirror: { device in openMirrorWindow(for: device) }
             )
         }
-        .defaultSize(
-            width: Constants.mainWindowSize.width,
-            height: Constants.mainWindowSize.height
-        )
-    }
-
-    @SceneBuilder
-    private var onboardingWindowScene: some Scene {
-        Window("Reflection Onboarding", id: Constants.onboardingWindowID) {
-            OnboardingWindowRootView(
-                appDelegate: appDelegate,
-                sessionManager: sessionManager,
-                appSettings: appSettings,
-                onMirror: { device in openMirrorWindow(for: device) }
-            )
-        }
-        .windowStyle(.hiddenTitleBar)
         .defaultSize(
             width: Constants.onboardingWelcomeSize.width,
             height: Constants.onboardingWelcomeSize.height
@@ -100,110 +67,136 @@ struct ReflectionApp: App {
     }
 }
 
-// MARK: - Main Window Root
+// MARK: - Root View (single window, conditional content)
 
-private struct MainWindowRootView: View {
+private struct RootView: View {
     let appDelegate: AppDelegate
     @ObservedObject var sessionManager: MirrorSessionManager
     @ObservedObject var appSettings: AppSettings
     let onMirror: (DeviceModel) -> Void
 
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
     @AppStorage(Constants.onboardingCompletedKey) private var onboardingCompleted = false
+    @State private var windowRef: NSWindow?
 
     var body: some View {
+        Group {
+            if onboardingCompleted {
+                mainContent
+            } else {
+                onboardingContent
+            }
+        }
+        .background(
+            WindowAccessor { window in
+                windowRef = window
+                applyWindowChrome(window, isOnboarding: !onboardingCompleted)
+            }
+        )
+        .onChange(of: onboardingCompleted) { completed in
+            guard let window = windowRef else { return }
+            applyWindowChrome(window, isOnboarding: !completed)
+            if completed {
+                resizeWindow(window, to: Constants.mainWindowSize)
+            }
+        }
+        .onAppear {
+            appDelegate.configure(
+                appSettings: appSettings,
+                sessionManager: sessionManager,
+                onMirror: onMirror,
+                openWindowAction: { [openWindow] windowID in
+                    openWindow(id: windowID)
+                }
+            )
+
+            // Gate on camera permission
+            let cameraAuthorized = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+            if !cameraAuthorized {
+                onboardingCompleted = false
+            }
+        }
+    }
+
+    // MARK: - Main Content
+
+    private var mainContent: some View {
         DeviceListView(
             sessionManager: sessionManager,
             discovery: sessionManager.discovery,
             appSettings: appSettings,
             onMirror: onMirror
         )
-        .background(
-            WindowAccessor { window in
-                window.identifier = NSUserInterfaceItemIdentifier(Constants.mainWindowID)
-            }
-        )
-        .task(id: onboardingCompleted) {
-            guard onboardingCompleted else { return }
+        .background(Constants.appBackground)
+        .task {
             await sessionManager.startDiscovery()
         }
-        .onAppear {
-            appDelegate.configure(
-                appSettings: appSettings,
-                sessionManager: sessionManager,
-                onMirror: onMirror,
-                openWindowAction: { [openWindow] windowID in
-                    openWindow(id: windowID)
-                }
-            )
-
-            guard !onboardingCompleted else { return }
-            if !focusWindowIfAvailable(windowID: Constants.onboardingWindowID) {
-                openWindow(id: Constants.onboardingWindowID)
-            }
-            dismiss()
-        }
     }
-}
 
-// MARK: - Onboarding Window Root
+    // MARK: - Onboarding Content
 
-private struct OnboardingWindowRootView: View {
-    let appDelegate: AppDelegate
-    @ObservedObject var sessionManager: MirrorSessionManager
-    @ObservedObject var appSettings: AppSettings
-    let onMirror: (DeviceModel) -> Void
-
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage(Constants.onboardingCompletedKey) private var onboardingCompleted = false
+    private var onboardingContent: some View {
+        onboardingView
+            .background(Constants.appBackground.ignoresSafeArea(.container, edges: .top))
+            .clipShape(RoundedRectangle(cornerRadius: Constants.onboardingCornerRadius))
+    }
 
     @ViewBuilder
-    var body: some View {
+    private var onboardingView: some View {
         if #available(macOS 15.0, *) {
-            baseView
-                .toolbar(removing: .title)
-                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-                .toolbarVisibility(.hidden, for: .windowToolbar)
+            OnboardingView {
+                completeOnboarding()
+            }
+            .toolbar(removing: .title)
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+            .toolbarVisibility(.hidden, for: .windowToolbar)
         } else {
-            baseView
+            OnboardingView {
+                completeOnboarding()
+            }
         }
     }
 
-    private var baseView: some View {
-        OnboardingView {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                onboardingCompleted = true
-            }
-            DispatchQueue.main.async {
-                if !focusWindowIfAvailable(windowID: Constants.mainWindowID) {
-                    openWindow(id: Constants.mainWindowID)
-                }
-                dismiss()
-            }
+    private func completeOnboarding() {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            onboardingCompleted = true
         }
-        .background(OnboardingWindowStyle())
-        .background(
-            WindowAccessor { window in
-                window.identifier = NSUserInterfaceItemIdentifier(Constants.onboardingWindowID)
-            }
-        )
-        .onAppear {
-            appDelegate.configure(
-                appSettings: appSettings,
-                sessionManager: sessionManager,
-                onMirror: onMirror,
-                openWindowAction: { [openWindow] windowID in
-                    openWindow(id: windowID)
-                }
-            )
+    }
 
-            guard onboardingCompleted else { return }
-            if !focusWindowIfAvailable(windowID: Constants.mainWindowID) {
-                openWindow(id: Constants.mainWindowID)
-            }
-            dismiss()
+    // MARK: - Window Chrome
+
+    private func applyWindowChrome(_ window: NSWindow, isOnboarding: Bool) {
+        window.identifier = NSUserInterfaceItemIdentifier(Constants.mainWindowID)
+        window.backgroundColor = Constants.appBackgroundNS
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.hasShadow = true
+
+        if isOnboarding {
+            window.styleMask.insert(.fullSizeContentView)
+            window.styleMask.remove(.resizable)
+            window.isMovableByWindowBackground = true
+            window.toolbar = nil
+            window.standardWindowButton(.closeButton)?.isHidden = true
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            window.standardWindowButton(.zoomButton)?.isHidden = true
+        } else {
+            window.styleMask.insert(.resizable)
+            window.styleMask.remove(.fullSizeContentView)
+            window.isMovableByWindowBackground = false
+            window.standardWindowButton(.closeButton)?.isHidden = false
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = false
+            window.standardWindowButton(.zoomButton)?.isHidden = false
         }
+    }
+
+    private func resizeWindow(_ window: NSWindow, to size: CGSize) {
+        let current = window.frame
+        let origin = NSPoint(
+            x: current.midX - size.width / 2,
+            y: current.midY - size.height / 2
+        )
+        let newFrame = NSRect(origin: origin, size: size)
+        window.setFrame(newFrame, display: true, animate: true)
     }
 }

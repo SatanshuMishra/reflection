@@ -5,7 +5,6 @@ enum Constants {
     // MARK: - Window Identifiers
 
     static let mainWindowID = "main"
-    static let onboardingWindowID = "onboarding"
 
     /// App background — near-black (#121215)
     static let appBackground = Color(red: 18 / 255, green: 18 / 255, blue: 21 / 255)
