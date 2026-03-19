@@ -39,7 +39,7 @@ final class MirrorWindowController: NSWindowController, NSWindowDelegate {
         )
         window.center()
         window.setFrameAutosaveName("MirrorWindow-\(deviceID)")
-        window.backgroundColor = .black
+        window.backgroundColor = Constants.appBackgroundNS
 
         super.init(window: window)
         window.delegate = self
