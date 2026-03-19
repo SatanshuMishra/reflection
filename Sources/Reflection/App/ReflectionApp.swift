@@ -1,9 +1,6 @@
+import AppKit
 import Foundation
 import SwiftUI
-
-/// Identifier for the main device-list window.
-/// Used with `openWindow(id:)` to recreate it after background-mode close.
-private let mainWindowID = "main"
 
 private func debugLog(_ message: String) {
     let logFile = "/tmp/reflection_debug.log"
@@ -22,22 +19,65 @@ private func debugLog(_ message: String) {
     }
 }
 
+@MainActor
+private func focusWindowIfAvailable(windowID: String) -> Bool {
+    guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == windowID }) else {
+        return false
+    }
+    window.makeKeyAndOrderFront(nil)
+    return true
+}
+
 @main
 struct ReflectionApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var sessionManager = MirrorSessionManager()
     @StateObject private var appSettings = AppSettings()
 
+    init() {
+        let shouldResetOnboarding = ProcessInfo.processInfo.arguments.contains("-resetOnboarding")
+
+        if shouldResetOnboarding {
+            UserDefaults.standard.set(false, forKey: Constants.onboardingCompletedKey)
+        }
+    }
+
     var body: some Scene {
-        WindowGroup(id: mainWindowID) {
-            MainContentView(
+        mainWindowScene
+        onboardingWindowScene
+    }
+
+    @SceneBuilder
+    private var mainWindowScene: some Scene {
+        Window("Reflection", id: Constants.mainWindowID) {
+            MainWindowRootView(
                 appDelegate: appDelegate,
                 sessionManager: sessionManager,
                 appSettings: appSettings,
                 onMirror: { device in openMirrorWindow(for: device) }
             )
         }
-        .defaultSize(width: 400, height: 300)
+        .defaultSize(
+            width: Constants.mainWindowSize.width,
+            height: Constants.mainWindowSize.height
+        )
+    }
+
+    @SceneBuilder
+    private var onboardingWindowScene: some Scene {
+        Window("Reflection Onboarding", id: Constants.onboardingWindowID) {
+            OnboardingWindowRootView(
+                appDelegate: appDelegate,
+                sessionManager: sessionManager,
+                appSettings: appSettings,
+                onMirror: { device in openMirrorWindow(for: device) }
+            )
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(
+            width: Constants.onboardingWelcomeSize.width,
+            height: Constants.onboardingWelcomeSize.height
+        )
     }
 
     private func openMirrorWindow(for device: DeviceModel) {
@@ -60,19 +100,17 @@ struct ReflectionApp: App {
     }
 }
 
-// MARK: - Main Content View
+// MARK: - Main Window Root
 
-/// Wraps DeviceListView to capture `@Environment(\.openWindow)`,
-/// which is only available inside a View (not in an App struct).
-/// Passes the captured action to AppDelegate so it can recreate
-/// the window from AppKit code (menu bar "Show Reflection").
-private struct MainContentView: View {
+private struct MainWindowRootView: View {
     let appDelegate: AppDelegate
     @ObservedObject var sessionManager: MirrorSessionManager
     @ObservedObject var appSettings: AppSettings
     let onMirror: (DeviceModel) -> Void
 
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage(Constants.onboardingCompletedKey) private var onboardingCompleted = false
 
     var body: some View {
         DeviceListView(
@@ -81,21 +119,91 @@ private struct MainContentView: View {
             appSettings: appSettings,
             onMirror: onMirror
         )
-        .task {
+        .background(
+            WindowAccessor { window in
+                window.identifier = NSUserInterfaceItemIdentifier(Constants.mainWindowID)
+            }
+        )
+        .task(id: onboardingCompleted) {
+            guard onboardingCompleted else { return }
             await sessionManager.startDiscovery()
         }
         .onAppear {
-            // Capture the SwiftUI openWindow action for AppDelegate.
-            // This is the only reliable way to create a new WindowGroup
-            // window from AppKit code (e.g., NSStatusItem popover).
             appDelegate.configure(
                 appSettings: appSettings,
                 sessionManager: sessionManager,
                 onMirror: onMirror,
-                openMainWindow: { [openWindow] in
-                    openWindow(id: mainWindowID)
+                openWindowAction: { [openWindow] windowID in
+                    openWindow(id: windowID)
                 }
             )
+
+            guard !onboardingCompleted else { return }
+            if !focusWindowIfAvailable(windowID: Constants.onboardingWindowID) {
+                openWindow(id: Constants.onboardingWindowID)
+            }
+            dismiss()
+        }
+    }
+}
+
+// MARK: - Onboarding Window Root
+
+private struct OnboardingWindowRootView: View {
+    let appDelegate: AppDelegate
+    @ObservedObject var sessionManager: MirrorSessionManager
+    @ObservedObject var appSettings: AppSettings
+    let onMirror: (DeviceModel) -> Void
+
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage(Constants.onboardingCompletedKey) private var onboardingCompleted = false
+
+    @ViewBuilder
+    var body: some View {
+        if #available(macOS 15.0, *) {
+            baseView
+                .toolbar(removing: .title)
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                .toolbarVisibility(.hidden, for: .windowToolbar)
+        } else {
+            baseView
+        }
+    }
+
+    private var baseView: some View {
+        OnboardingView {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                onboardingCompleted = true
+            }
+            DispatchQueue.main.async {
+                if !focusWindowIfAvailable(windowID: Constants.mainWindowID) {
+                    openWindow(id: Constants.mainWindowID)
+                }
+                dismiss()
+            }
+        }
+        .background(OnboardingWindowStyle())
+        .background(
+            WindowAccessor { window in
+                window.identifier = NSUserInterfaceItemIdentifier(Constants.onboardingWindowID)
+            }
+        )
+        .onAppear {
+            appDelegate.configure(
+                appSettings: appSettings,
+                sessionManager: sessionManager,
+                onMirror: onMirror,
+                openWindowAction: { [openWindow] windowID in
+                    openWindow(id: windowID)
+                }
+            )
+
+            guard onboardingCompleted else { return }
+            if !focusWindowIfAvailable(windowID: Constants.mainWindowID) {
+                openWindow(id: Constants.mainWindowID)
+            }
+            dismiss()
         }
     }
 }

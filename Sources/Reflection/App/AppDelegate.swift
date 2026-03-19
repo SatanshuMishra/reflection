@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private weak var appSettings: AppSettings?
     private var onMirror: ((DeviceModel) -> Void)?
-    private var openMainWindow: (() -> Void)?
+    private var openWindowAction: ((String) -> Void)?
 
     /// Device IDs with open mirror windows, for window identification.
     var mirrorWindowDeviceIDs: [String] { Array(windowControllers.keys) }
@@ -43,13 +43,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appSettings: AppSettings,
         sessionManager: MirrorSessionManager,
         onMirror: @escaping (DeviceModel) -> Void,
-        openMainWindow: @escaping () -> Void
+        openWindowAction: @escaping (String) -> Void
     ) {
-        // Guard against duplicate configuration
-        guard self.appSettings == nil else { return }
+        // Keep actions up to date even if the originating SwiftUI window
+        // instance changes (for example, onboarding -> main transitions).
+        let isFirstConfiguration = self.appSettings == nil
         self.appSettings = appSettings
         self.onMirror = onMirror
-        self.openMainWindow = openMainWindow
+        self.openWindowAction = openWindowAction
+
+        guard isFirstConfiguration else { return }
 
         let menuBarContent = MenuBarView(
             discovery: sessionManager.discovery,
@@ -98,22 +101,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
 
-        // Try to bring an existing normal window to front
-        for window in NSApp.windows {
-            if window.level == .normal && window.canBecomeKey {
-                window.makeKeyAndOrderFront(nil)
-                return
-            }
+        let targetWindowID = UserDefaults.standard.bool(forKey: Constants.onboardingCompletedKey)
+            ? Constants.mainWindowID
+            : Constants.onboardingWindowID
+
+        // Prefer focusing an existing primary window and avoid picking
+        // unrelated windows (for example, a mirror window).
+        if let targetWindow = NSApp.windows.first(where: {
+            $0.identifier?.rawValue == targetWindowID
+        }) {
+            targetWindow.makeKeyAndOrderFront(nil)
+            return
         }
 
-        // No window found — SwiftUI destroyed it on close.
-        // Use the captured openWindow(id:) action from SwiftUI
-        // environment to create a new WindowGroup window.
-        openMainWindow?()
+        // No primary window found — recreate it via SwiftUI's openWindow.
+        openWindowAction?(targetWindowID)
     }
 
     /// Opens the main window and navigates to the Settings page.
     func showSettings() {
+        guard UserDefaults.standard.bool(forKey: Constants.onboardingCompletedKey) else {
+            showMainWindow()
+            return
+        }
         appSettings?.navigateToSettings = true
         showMainWindow()
     }
