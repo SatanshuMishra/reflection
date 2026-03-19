@@ -58,6 +58,11 @@ final class AppSettings: ObservableObject {
         self.defaults = defaults
         self.loginItemService = loginItemService
 
+        defaults.register(defaults: [
+            Constants.runInBackgroundKey: false,
+            Constants.launchAtLoginKey: false,
+        ])
+
         // Read stored values (or use defaults)
         let storedAppearance = defaults.string(forKey: Constants.appearanceKey)
         self.appearance = storedAppearance.flatMap(AppearanceMode.init(rawValue:)) ?? .system
