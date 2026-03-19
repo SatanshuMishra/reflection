@@ -27,6 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(handleMirrorSessionStopped(_:)),
+            name: .mirrorSessionStopped,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(handleDeviceDisconnected(_:)),
             name: .deviceDisconnected,
             object: nil
@@ -172,6 +179,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let deviceID = notification.userInfo?["deviceID"] as? String else { return }
         Task { @MainActor in
             self.windowControllers.removeValue(forKey: deviceID)
+        }
+    }
+
+    @objc nonisolated private func handleMirrorSessionStopped(_ notification: Notification) {
+        guard let deviceID = notification.userInfo?["deviceID"] as? String else { return }
+        Task { @MainActor in
+            self.closeMirrorWindow(deviceID: deviceID)
         }
     }
 

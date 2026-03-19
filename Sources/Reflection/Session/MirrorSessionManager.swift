@@ -96,6 +96,12 @@ public final class MirrorSessionManager: ObservableObject {
         await capture.stopCapture()
         activeSessions.removeValue(forKey: deviceID)
         logger.info("Mirroring stopped for device \(deviceID)")
+
+        NotificationCenter.default.post(
+            name: .mirrorSessionStopped,
+            object: nil,
+            userInfo: ["deviceID": deviceID]
+        )
     }
 
     private func observeState(of capture: any ScreenCapture, deviceID: String) {
