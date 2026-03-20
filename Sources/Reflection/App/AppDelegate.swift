@@ -11,11 +11,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     private weak var appSettings: AppSettings?
+    private weak var sessionManager: MirrorSessionManager?
     private var onMirror: ((DeviceModel) -> Void)?
     private var openWindowAction: ((String) -> Void)?
 
     /// Device IDs with open mirror windows, for window identification.
     var mirrorWindowDeviceIDs: [String] { Array(windowControllers.keys) }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NotificationCenter.default.addObserver(
@@ -56,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // instance changes (for example, onboarding -> main transitions).
         let isFirstConfiguration = self.appSettings == nil
         self.appSettings = appSettings
+        self.sessionManager = sessionManager
         self.onMirror = onMirror
         self.openWindowAction = openWindowAction
 
@@ -89,6 +95,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        statusBarController.tearDown()
+        sessionManager?.discovery.stopDiscovery()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -123,9 +123,10 @@ final class StatusBarController: NSObject {
         }
     }
 
-    /// Tears down the event monitor. Call before releasing.
+    /// Tears down the event monitor, status item, and subscriptions.
     func tearDown() {
         removeEventMonitor()
         removeStatusItem()
+        cancellables.removeAll()
     }
 }
