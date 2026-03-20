@@ -11,13 +11,12 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/FD-/RPiPlay.git
     GIT_TAG        64d0341ed3bef098c940c9ed0675948870a271f9
     GIT_SHALLOW    TRUE
+    EXCLUDE_FROM_ALL
 )
 
-# Download only — don't add_subdirectory (RPiPlay's CMake is a full project)
-FetchContent_GetProperties(rpiplay)
-if(NOT rpiplay_POPULATED)
-    FetchContent_Populate(rpiplay)
-endif()
+# Download RPiPlay source — EXCLUDE_FROM_ALL prevents its own CMakeLists.txt
+# from being processed (we compile lib/ sources ourselves below).
+FetchContent_MakeAvailable(rpiplay)
 
 # --------------------------------------------------------------------------
 # RPiPlay lib/ sources (excluding dnssd.c — we handle mDNS ourselves)

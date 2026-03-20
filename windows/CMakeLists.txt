@@ -131,9 +131,17 @@ set_target_properties(Reflection PROPERTIES
 # Tests
 # --------------------------------------------------------------------------
 if(BUILD_TESTS)
-    enable_testing()
-    find_package(GTest CONFIG REQUIRED)
-    add_subdirectory(tests)
+    find_package(GTest CONFIG QUIET)
+    if(GTest_FOUND)
+        enable_testing()
+        add_subdirectory(tests)
+    else()
+        message(WARNING
+            "GoogleTest not found — tests will be skipped.\n"
+            "Install via: vcpkg install gtest:x64-windows\n"
+            "Then re-run cmake with -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake"
+        )
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
