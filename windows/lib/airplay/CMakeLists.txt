@@ -24,6 +24,20 @@ FetchContent_Declare(
 FetchContent_GetProperties(rpiplay)
 if(NOT rpiplay_POPULATED)
     FetchContent_Populate(rpiplay)
+
+    # ---- Post-download patches for MSVC compatibility ----
+    # MSVC does not support C99 Variable Length Arrays (VLAs).
+    # raop_rtp_mirror.c line 378: unsigned char sps_pps[sps_pps_len]
+    # Replace with _alloca() (stack allocation, no free needed).
+    set(_mirror_file "${rpiplay_SOURCE_DIR}/lib/raop_rtp_mirror.c")
+    file(READ "${_mirror_file}" _mirror_content)
+    string(REPLACE
+        "unsigned char sps_pps[sps_pps_len]"
+        "unsigned char *sps_pps = (unsigned char *)_alloca(sps_pps_len)"
+        _mirror_content "${_mirror_content}"
+    )
+    file(WRITE "${_mirror_file}" "${_mirror_content}")
+    message(STATUS "Patched raop_rtp_mirror.c: VLA → _alloca() for MSVC")
 endif()
 
 # --------------------------------------------------------------------------
@@ -127,7 +141,9 @@ if(MSVC)
         /wd4013   # undefined function assumed extern (COND macros edge case)
         /wd4047   # differs in levels of indirection
         /wd4024   # different types for formal and actual parameter
+        /wd4018   # signed/unsigned mismatch in third-party code
         /wd4101   # unreferenced local variable
+        /wd4305   # truncation from int to unsigned char
     )
 else()
     target_compile_options(airplay_core PRIVATE -w)
