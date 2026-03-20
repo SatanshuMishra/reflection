@@ -1,0 +1,94 @@
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - 'vw*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            cmake_arch: x64
+            triplet: x64-windows
+
+    runs-on: ${{ matrix.runner }}
+
+    defaults:
+      run:
+        working-directory: windows
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'windows/vcpkg.json'
+        env:
+          VCPKG_BINARY_SOURCES: 'clear;default,readwrite'
+
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -A ${{ matrix.cmake_arch }}
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+          -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Run tests
+        run: ctest --test-dir build --config Release --output-on-failure
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#vw}" >> "$GITHUB_OUTPUT"
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $staging = "Reflection-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Path $staging -Force
+          Copy-Item "build/Release/Reflection.exe" "$staging/" -ErrorAction SilentlyContinue
+          # Copy any DLLs that were built alongside
+          Get-ChildItem "build/Release/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$staging/"
+          Compress-Archive -Path "$staging/*" -DestinationPath "Reflection-${{ steps.version.outputs.version }}-${{ matrix.arch }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            windows/Reflection-*.zip
+
+  create-release:
+    needs: build-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "Reflection for Windows ${{ github.ref_name }}"
+          files: artifacts/**/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
