@@ -24,6 +24,7 @@
 ```powershell
 # From the vcpkg directory
 vcpkg install openssl:x64-windows
+vcpkg install libplist:x64-windows
 vcpkg install gtest:x64-windows
 
 # Optional (needed for audio playback in later milestones)

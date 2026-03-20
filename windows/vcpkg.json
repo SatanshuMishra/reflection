@@ -4,6 +4,7 @@
   "description": "AirPlay iPad screen mirroring for Windows",
   "dependencies": [
     "openssl",
+    "libplist",
     "fdk-aac",
     "gtest"
   ]
