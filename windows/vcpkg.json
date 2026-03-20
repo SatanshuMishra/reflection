@@ -1,0 +1,10 @@
+{
+  "name": "reflection-windows",
+  "version": "1.0.0",
+  "description": "AirPlay iPad screen mirroring for Windows",
+  "dependencies": [
+    "openssl",
+    "fdk-aac",
+    "gtest"
+  ]
+}
