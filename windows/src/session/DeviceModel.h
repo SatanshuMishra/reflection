@@ -10,7 +10,7 @@ struct DeviceModel {
     std::string id;          /// Unique connection identifier.
     std::string name;        /// Device display name (e.g., "iPad Pro").
     std::string model_id;    /// Device model (e.g., "iPad13,4").
-    bool is_connected;       /// Whether the device is currently mirroring.
+    bool is_connected = false;  /// Whether the device is currently mirroring.
 
     bool operator==(const DeviceModel&) const = default;
 };
