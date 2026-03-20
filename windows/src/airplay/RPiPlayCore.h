@@ -5,12 +5,13 @@
 #include <atomic>
 #include <mutex>
 
-// Forward declare RPiPlay's opaque types (avoid including C headers in our header)
+// Forward declare RPiPlay's opaque types (avoid including C headers in our header).
+// h264_decode_struct and aac_decode_struct are typedef'd anonymous structs in
+// RPiPlay's stream.h, which can't be forward-declared in C++. We use void*
+// in callback signatures and cast in the .cpp where stream.h is included.
 extern "C" {
     typedef struct raop_s raop_t;
     typedef struct raop_ntp_s raop_ntp_t;
-    struct h264_decode_struct;
-    struct aac_decode_struct;
 }
 
 namespace reflection {
@@ -57,8 +58,10 @@ private:
 
     /// Static C callbacks matching RPiPlay's exact raop_callbacks_t signatures.
     /// These are called from RAOP internal threads.
-    static void on_video_process(void* cls, raop_ntp_t* ntp, h264_decode_struct* data);
-    static void on_audio_process(void* cls, raop_ntp_t* ntp, aac_decode_struct* data);
+    /// Parameters use void* because RPiPlay's h264_decode_struct and
+    /// aac_decode_struct are typedef'd anonymous structs (can't forward-declare).
+    static void on_video_process(void* cls, raop_ntp_t* ntp, void* data);
+    static void on_audio_process(void* cls, raop_ntp_t* ntp, void* data);
     static void on_conn_init(void* cls);
     static void on_conn_destroy(void* cls);
 };

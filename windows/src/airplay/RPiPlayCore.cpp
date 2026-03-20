@@ -28,11 +28,15 @@ bool RPiPlayCore::init(const AirPlayCoreConfig& config) {
     Logger::info("RPiPlayCore::init — server_name='{}', raop_port={}, airplay_port={}",
                  config.server_name, config.raop_port, config.airplay_port);
 
-    // Build RPiPlay callback struct — exact signature match, no casts
+    // Build RPiPlay callback struct.
+    // video_process and audio_process use void* params in our header (because
+    // RPiPlay's h264_decode_struct/aac_decode_struct are typedef'd anonymous
+    // structs that can't be forward-declared in C++). The function pointer
+    // types are compatible at the ABI level — both are pointer-sized params.
     raop_callbacks_t cbs = {};
     cbs.cls = this;
-    cbs.video_process = &on_video_process;
-    cbs.audio_process = &on_audio_process;
+    cbs.video_process = reinterpret_cast<decltype(cbs.video_process)>(&on_video_process);
+    cbs.audio_process = reinterpret_cast<decltype(cbs.audio_process)>(&on_audio_process);
     cbs.conn_init = &on_conn_init;
     cbs.conn_destroy = &on_conn_destroy;
 
@@ -68,7 +72,7 @@ bool RPiPlayCore::start() {
         hw_addr[i] = static_cast<char>(config_.hardware_address[i]);
     }
 
-    int result = raop_start(raop_, &port, hw_addr, sizeof(hw_addr), nullptr);
+    int result = raop_start(raop_, &port, hw_addr, sizeof(hw_addr));
     if (result < 0) {
         Logger::error("raop_start failed with error: {}", result);
         return false;
@@ -128,8 +132,9 @@ void RPiPlayCore::set_disconnection_callback(DisconnectionCallback callback) {
 // Static C callbacks — called from RPiPlay's internal RAOP threads
 // --------------------------------------------------------------------------
 
-void RPiPlayCore::on_video_process(void* cls, raop_ntp_t* /*ntp*/, h264_decode_struct* h264) {
+void RPiPlayCore::on_video_process(void* cls, raop_ntp_t* /*ntp*/, void* data) {
     auto* self = static_cast<RPiPlayCore*>(cls);
+    auto* h264 = static_cast<h264_decode_struct*>(data);
 
     if (!h264 || !h264->data || h264->data_len <= 0) return;
 
@@ -151,8 +156,9 @@ void RPiPlayCore::on_video_process(void* cls, raop_ntp_t* /*ntp*/, h264_decode_s
     cb(frame);
 }
 
-void RPiPlayCore::on_audio_process(void* cls, raop_ntp_t* /*ntp*/, aac_decode_struct* aac) {
+void RPiPlayCore::on_audio_process(void* cls, raop_ntp_t* /*ntp*/, void* data) {
     auto* self = static_cast<RPiPlayCore*>(cls);
+    auto* aac = static_cast<aac_decode_struct*>(data);
 
     if (!aac || !aac->data || aac->data_len <= 0) return;
 
