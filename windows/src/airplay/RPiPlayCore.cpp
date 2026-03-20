@@ -63,16 +63,12 @@ bool RPiPlayCore::start() {
 
     Logger::info("RPiPlayCore::start — listening on port {}", config_.raop_port);
 
-    // raop_start takes a mutable port (it may choose a different one if busy)
+    // raop_start takes a mutable port (it may choose a different one if busy).
+    // Hardware address is NOT passed to raop_start — it's handled by the
+    // DNS-SD layer (our NativeMdnsAdvertiser) which advertises with the MAC.
     unsigned short port = config_.raop_port;
 
-    // Convert hardware address to char array for RPiPlay
-    char hw_addr[6];
-    for (int i = 0; i < 6; ++i) {
-        hw_addr[i] = static_cast<char>(config_.hardware_address[i]);
-    }
-
-    int result = raop_start(raop_, &port, hw_addr, sizeof(hw_addr));
+    int result = raop_start(raop_, &port);
     if (result < 0) {
         Logger::error("raop_start failed with error: {}", result);
         return false;
