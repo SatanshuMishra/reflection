@@ -99,6 +99,8 @@ LRESULT CALLBACK MirrorWindow::wnd_proc(
 
         case WM_DESTROY: {
             // TODO (Milestone 5): Notify MirrorSessionManager of window close
+            // For now, closing the mirror window exits the app.
+            PostQuitMessage(0);
             return 0;
         }
 
