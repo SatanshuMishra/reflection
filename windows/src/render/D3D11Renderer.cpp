@@ -85,7 +85,8 @@ bool D3D11Renderer::init(HWND hwnd, int width, int height) {
         Logger::warn("Using WARP software renderer (no GPU acceleration)");
     }
 
-    Logger::info("D3D11 device created — feature level: 0x{:X}", feature_level);
+    Logger::info("D3D11 device created — feature level: 0x{:X}",
+                 static_cast<unsigned int>(feature_level));
 
     // Create the render target from the back buffer
     if (!create_render_target()) {
