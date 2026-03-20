@@ -2,23 +2,6 @@ import AVFoundation
 import Foundation
 import os
 
-private func debugLog(_ message: String) {
-    let logFile = "/tmp/reflection_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logFile) {
-            if let handle = FileHandle(forWritingAtPath: logFile) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            FileManager.default.createFile(atPath: logFile, contents: data)
-        }
-    }
-}
-
 public final class USBCapture: ScreenCapture, @unchecked Sendable {
 
     // MARK: - ScreenCapture Protocol
@@ -58,15 +41,12 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
     // MARK: - ScreenCapture
 
     public func startCapture() async throws {
-        debugLog("[USBCapture] startCapture for device \(deviceID)")
         updateState(.starting)
 
         try checkPermission()
-        debugLog("[USBCapture] Permission OK")
 
         let session = try configureSession()
         self.captureSession = session
-        debugLog("[USBCapture] Session configured, inputs=\(session.inputs.count)")
 
         registerInterruptionObservers(for: session)
 
@@ -81,9 +61,7 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
         if session.isRunning {
             frameStaleMonitor.startMonitoring()
             updateState(.running)
-            debugLog("[USBCapture] Capture RUNNING for device \(deviceID)")
         } else {
-            debugLog("[USBCapture] Session FAILED to start running for device \(deviceID)")
             throw CaptureError.sessionConfigurationFailed("Session failed to start running")
         }
     }
@@ -126,10 +104,8 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
 
     private func configureSession() throws -> AVCaptureSession {
         guard let device = AVCaptureDevice(uniqueID: deviceID) else {
-            debugLog("[USBCapture] Device NOT FOUND for ID: \(deviceID)")
             throw CaptureError.deviceNotFound
         }
-        debugLog("[USBCapture] Found device: \(device.localizedName) | model=\(device.modelID) | video=\(device.hasMediaType(.video)) | muxed=\(device.hasMediaType(.muxed))")
 
         let session = AVCaptureSession()
         session.beginConfiguration()
@@ -144,13 +120,11 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
             input = try AVCaptureDeviceInput(device: device)
         } catch {
             session.commitConfiguration()
-            debugLog("[USBCapture] Failed to create input: \(error.localizedDescription)")
             throw CaptureError.sessionConfigurationFailed(error.localizedDescription)
         }
 
         guard session.canAddInput(input) else {
             session.commitConfiguration()
-            debugLog("[USBCapture] Cannot add input to session")
             throw CaptureError.sessionConfigurationFailed("Cannot add device input to session")
         }
         session.addInput(input)
@@ -164,7 +138,6 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
         for connection in session.connections {
             for port in connection.inputPorts where port.mediaType == .audio {
                 port.isEnabled = false
-                debugLog("[USBCapture] Disabled audio port to reduce sync latency")
             }
             if connection.isVideoMirroringSupported {
                 connection.automaticallyAdjustsVideoMirroring = false
@@ -180,11 +153,9 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
         videoOutput.setSampleBufferDelegate(frameDelegate, queue: frameDelegateQueue)
         if session.canAddOutput(videoOutput) {
             session.addOutput(videoOutput)
-            debugLog("[USBCapture] Added video data output for frame monitoring")
         }
 
         session.commitConfiguration()
-        debugLog("[USBCapture] Session configured (preset=inputPriority)")
 
         return session
     }
@@ -194,7 +165,6 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
             try device.lockForConfiguration()
 
             let supportedRanges = device.activeFormat.videoSupportedFrameRateRanges
-            debugLog("[USBCapture] Active format frame rates: \(supportedRanges.map { "\($0.minFrameRate)-\($0.maxFrameRate)fps" })")
 
             // Lock to the highest supported frame rate (up to 60fps).
             // Higher FPS = shorter per-frame interval = lower perceived latency.
@@ -203,12 +173,11 @@ public final class USBCapture: ScreenCapture, @unchecked Sendable {
                 let frameDuration = CMTime(value: 1, timescale: CMTimeScale(targetFPS))
                 device.activeVideoMinFrameDuration = frameDuration
                 device.activeVideoMaxFrameDuration = frameDuration
-                debugLog("[USBCapture] Locked frame rate to \(targetFPS)fps")
             }
 
             device.unlockForConfiguration()
         } catch {
-            debugLog("[USBCapture] Could not lock device for config: \(error.localizedDescription)")
+            logger.warning("Could not lock device for configuration: \(error.localizedDescription)")
         }
     }
 
