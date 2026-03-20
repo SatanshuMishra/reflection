@@ -17,6 +17,17 @@ option(BUILD_INSTALLER "Build MSI installer" OFF)
 # vcpkg integration (auto-detected via CMAKE_TOOLCHAIN_FILE)
 find_package(OpenSSL REQUIRED)
 
+# libplist — required by RPiPlay for AirPlay RTSP plist parsing
+find_path(PLIST_INCLUDE_DIR NAMES plist/plist.h)
+find_library(PLIST_LIBRARY NAMES plist plist-2.0 libplist libplist-2.0)
+if(NOT PLIST_INCLUDE_DIR OR NOT PLIST_LIBRARY)
+    message(FATAL_ERROR
+        "libplist not found. Install via: vcpkg install libplist:x64-windows\n"
+        "Then re-run cmake with -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake"
+    )
+endif()
+message(STATUS "Found libplist: ${PLIST_LIBRARY}")
+
 # FDK-AAC via vcpkg (optional — needed for audio in later milestones)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
