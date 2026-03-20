@@ -54,16 +54,9 @@
 
 /* --- struct timespec (POSIX) --------------------------------------------- */
 /* raop_ntp.c uses struct timespec for NTP timing and condition waits.
- * MSVC's <time.h> may provide it with C11, but we define it unconditionally
- * to avoid configuration complexity. Guard with standard MSVC macro. */
+ * MSVC's UCRT <time.h> (VS 2015+) already defines struct timespec as part
+ * of C11 support. No custom definition needed — just include <time.h>. */
 #include <time.h>
-#ifndef _TIMESPEC_DEFINED
-#define _TIMESPEC_DEFINED
-struct timespec {
-    long tv_sec;
-    long tv_nsec;
-};
-#endif
 
 /* --- CLOCK_REALTIME + clock_gettime() (POSIX) ---------------------------- */
 /* raop_ntp.c calls clock_gettime(CLOCK_REALTIME, &time) to get microsecond
