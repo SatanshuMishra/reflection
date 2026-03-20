@@ -161,6 +161,18 @@ static __inline int pthread_cond_timedwait(
  * We use _alloca() for stack allocation (no free needed). */
 #include <malloc.h>  /* _alloca */
 
+/* --- ioctl() → ioctlsocket() (POSIX → Winsock2) ------------------------- */
+/* raop_ntp.c calls ioctl(fd, FIONREAD, &bytes_available) to check pending
+ * bytes in a socket buffer. On Windows, ioctlsocket() is the equivalent.
+ * The third arg differs: ioctl takes int*, ioctlsocket takes u_long*.
+ * This inline wrapper handles the type conversion safely. */
+static __inline int ioctl(int fd, long cmd, int *argp) {
+    u_long val = 0;
+    int result = ioctlsocket((SOCKET)fd, cmd, &val);
+    if (argp) *argp = (int)val;
+    return result;
+}
+
 /* --- Provide timeGetTime if memalign.h needs it -------------------------- */
 #pragma comment(lib, "winmm.lib")
 
