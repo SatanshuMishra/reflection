@@ -4,23 +4,6 @@ import CoreMediaIO
 import Foundation
 import os
 
-private func debugLog(_ message: String) {
-    let logFile = "/tmp/reflection_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logFile) {
-            if let handle = FileHandle(forWritingAtPath: logFile) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            FileManager.default.createFile(atPath: logFile, contents: data)
-        }
-    }
-}
-
 /// iOS devices connected via USB report modelID "iOS Device" through CoreMediaIO.
 private let iosDeviceModelID = "iOS Device"
 
@@ -34,33 +17,27 @@ public final class DeviceDiscovery: ObservableObject {
     @Published public private(set) var cameraAuthorized = false
     @Published public private(set) var isRefreshing = false
 
-    private var discoverySession: AVCaptureDevice.DiscoverySession?
-    private var observation: NSKeyValueObservation?
+    private nonisolated(unsafe) var discoverySession: AVCaptureDevice.DiscoverySession?
+    private nonisolated(unsafe) var observation: NSKeyValueObservation?
     private let logger = Logger.discovery
 
     public init() {}
 
+    deinit {
+        observation?.invalidate()
+    }
+
     public func startDiscovery() async {
-        debugLog("[Discovery] Starting discovery...")
         enableIOSDeviceDiscovery()
         checkCameraAuthorizationStatus()
 
-        guard cameraAuthorized else {
-            debugLog("[Discovery] Camera not authorized — skipping device scan.")
-            return
-        }
+        guard cameraAuthorized else { return }
 
         // CoreMediaIO needs time to register iOS devices after the property is set.
         // Wait before creating the discovery session.
-        debugLog("[Discovery] Waiting 3s for CoreMediaIO to register iOS devices...")
         try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
 
-        logAllAvailableDevices()
         beginDeviceDiscovery()
-        debugLog("[Discovery] Discovery complete. Found \(devices.count) device(s).")
-        for device in devices {
-            debugLog("[Discovery]   - \(device.name) (model=\(device.modelID), connected=\(device.isConnected))")
-        }
     }
 
     public func refreshDevices() {
@@ -132,12 +109,6 @@ public final class DeviceDiscovery: ObservableObject {
         // Filter to only iOS devices — excludes virtual cameras, webcams, etc.
         let iosDevices = primarySession.devices.filter(isIOSDevice)
 
-        debugLog("[Discovery] Total external devices: \(primarySession.devices.count), iOS devices: \(iosDevices.count)")
-        for device in primarySession.devices {
-            let included = isIOSDevice(device) ? "INCLUDED" : "FILTERED OUT"
-            debugLog("[Discovery]   \(device.localizedName) | model=\(device.modelID) | \(included)")
-        }
-
         devices = iosDevices.map { DeviceModel(from: $0) }
 
         observation = primarySession.observe(\.devices, options: [.new]) { [weak self] _, change in
@@ -154,45 +125,6 @@ public final class DeviceDiscovery: ObservableObject {
         }
 
         logger.info("Device discovery started. Found \(self.devices.count) iOS device(s).")
-    }
-
-    // MARK: - Diagnostics
-
-    private func logAllAvailableDevices() {
-        debugLog("[Discovery] === Device Diagnostic ===")
-
-        // CoreMediaIO direct enumeration
-        var deviceProperty = CMIOObjectPropertyAddress(
-            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
-            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
-            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
-        )
-        var dataSize: UInt32 = 0
-        CMIOObjectGetPropertyDataSize(
-            CMIOObjectID(kCMIOObjectSystemObject),
-            &deviceProperty, 0, nil, &dataSize
-        )
-        let cmioDeviceCount = Int(dataSize) / MemoryLayout<CMIOObjectID>.size
-        debugLog("[Discovery] CoreMediaIO device count: \(cmioDeviceCount)")
-
-        // AVFoundation enumeration with all device types
-        var allTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
-        if #available(macOS 14.0, *) {
-            allTypes.append(.external)
-        } else {
-            allTypes.append(.externalUnknown)
-        }
-
-        let allSession = AVCaptureDevice.DiscoverySession(
-            deviceTypes: allTypes,
-            mediaType: nil,
-            position: .unspecified
-        )
-        for device in allSession.devices {
-            debugLog("[Discovery]   AVF Device: \(device.localizedName) | type=\(device.deviceType.rawValue) | model=\(device.modelID) | video=\(device.hasMediaType(.video)) | muxed=\(device.hasMediaType(.muxed))")
-        }
-
-        logger.info("=== End Diagnostic ===")
     }
 
     // MARK: - CoreMediaIO

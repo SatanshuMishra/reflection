@@ -3,23 +3,6 @@ import Combine
 import Foundation
 import os
 
-private func debugLog(_ message: String) {
-    let logFile = "/tmp/reflection_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logFile) {
-            if let handle = FileHandle(forWritingAtPath: logFile) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            FileManager.default.createFile(atPath: logFile, contents: data)
-        }
-    }
-}
-
 public typealias CaptureFactory = @Sendable (String) -> any ScreenCapture
 
 @MainActor
@@ -63,11 +46,7 @@ public final class MirrorSessionManager: ObservableObject {
     }
 
     public func startMirroring(deviceID: String) async {
-        debugLog("[SessionManager] startMirroring for device \(deviceID)")
-        guard activeSessions[deviceID] == nil else {
-            debugLog("[SessionManager] Session already active for device \(deviceID)")
-            return
-        }
+        guard activeSessions[deviceID] == nil else { return }
 
         let capture = captureFactory(deviceID)
         activeSessions[deviceID] = capture
@@ -75,15 +54,19 @@ public final class MirrorSessionManager: ObservableObject {
         do {
             try await capture.startCapture()
             observeState(of: capture, deviceID: deviceID)
-            debugLog("[SessionManager] Mirroring STARTED for device \(deviceID), captureSession=\(capture.captureSession != nil ? "EXISTS" : "NIL")")
         } catch let error as CaptureError {
             currentError = error
             activeSessions.removeValue(forKey: deviceID)
-            debugLog("[SessionManager] CaptureError: \(error.localizedDescription)")
         } catch {
             currentError = .unknownError(error.localizedDescription)
             activeSessions.removeValue(forKey: deviceID)
-            debugLog("[SessionManager] Error: \(error.localizedDescription)")
+        }
+    }
+
+    public func stopAllMirroring() async {
+        let deviceIDs = Array(activeSessions.keys)
+        for deviceID in deviceIDs {
+            await stopMirroring(deviceID: deviceID)
         }
     }
 
