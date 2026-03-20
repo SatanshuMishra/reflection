@@ -23,6 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Remove legacy debug log file that may contain PII (device names, UUIDs).
+        // Previous versions wrote plaintext to /tmp/reflection_debug.log without
+        // rotation or access control. This one-time cleanup runs silently.
+        try? FileManager.default.removeItem(atPath: "/tmp/reflection_debug.log")
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleMirrorWindowClosed(_:)),
