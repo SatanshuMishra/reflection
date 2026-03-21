@@ -334,8 +334,11 @@ void D3D11Renderer::render_frame() {
     vp.MaxDepth = 1.0f;
     context_->RSSetViewports(1, &vp);
 
-    // Present (VSync)
-    swap_chain_->Present(1, 0);
+    // Present immediately (no VSync wait). DWM handles VSync for windowed
+    // apps, so Present(0, 0) submits the frame to the compositor and returns
+    // without blocking. Present(1, 0) would block up to 16ms per call,
+    // starving the Win32 message pump and causing "Not Responding".
+    swap_chain_->Present(0, 0);
 }
 
 void D3D11Renderer::render_video_frame(
@@ -418,8 +421,8 @@ void D3D11Renderer::render_video_frame(
     ID3D11ShaderResourceView* null_srvs[] = { nullptr, nullptr };
     context_->PSSetShaderResources(0, 2, null_srvs);
 
-    // Present (VSync)
-    swap_chain_->Present(1, 0);
+    // Present immediately — DWM handles VSync for windowed apps.
+    swap_chain_->Present(0, 0);
 }
 
 void D3D11Renderer::shutdown() {

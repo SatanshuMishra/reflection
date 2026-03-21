@@ -363,14 +363,10 @@ void App::on_render_timer() {
 
     // Feed queued frames to the decoder, but limit per tick to keep the
     // main thread responsive. Software H.264 decode of a 1080p frame takes
-    // ~10-30ms. If we decode too many frames in one timer tick (16ms), the
-    // Win32 message pump starves and the window goes "Not Responding".
-    //
-    // Strategy: decode up to kMaxFramesPerTick frames. Any remaining frames
-    // stay in the queue for the next tick. At 30fps input and 60fps timer,
-    // there's typically 0-1 frames per tick, so the limit only matters
-    // during the initial connection burst.
-    constexpr int kMaxFramesPerTick = 4;
+    // ~10-30ms. We must leave enough time for the Win32 message pump to
+    // process WM_PAINT, mouse events, etc., or Windows marks the window
+    // "Not Responding" after 5 seconds of unresponsiveness.
+    constexpr int kMaxFramesPerTick = 2;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> last_texture;
     int last_width = 0;
@@ -378,6 +374,7 @@ void App::on_render_timer() {
 
     static uint64_t total_frames_fed = 0;
     static uint64_t total_frames_decoded = 0;
+    static bool rendered_blank = false;
 
     int frames_this_tick = 0;
     OwnedVideoFrame frame;
@@ -418,11 +415,19 @@ void App::on_render_timer() {
         // Render the most recently decoded frame
         mirror_window_->renderer()->render_video_frame(
             last_texture.Get(), last_width, last_height);
+        rendered_blank = false;
         return;
     }
 
-    // No decoded frame available — render blank background
-    mirror_window_->renderer()->render_frame();
+    // No decoded frame available — render blank background ONCE.
+    // Do NOT call render_frame()/Present every tick when idle. Present()
+    // submits a frame to DWM and has overhead even without VSync. Calling
+    // it 60 times/sec with no new content wastes CPU and can starve the
+    // message pump on slower machines.
+    if (!rendered_blank) {
+        mirror_window_->renderer()->render_frame();
+        rendered_blank = true;
+    }
 }
 
 // ---------------------------------------------------------------------------
