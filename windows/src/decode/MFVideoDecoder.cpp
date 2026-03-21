@@ -66,9 +66,13 @@ bool MFVideoDecoder::init(ID3D11Device* device) {
         return false;
     }
 
-    // Step 6: Negotiate output type (NV12)
+    // Step 6: Try to negotiate output type (NV12).
+    // Some MFTs don't know their output capabilities until they've received
+    // SPS/PPS data. If negotiation fails now, it will be retried when the
+    // MFT signals MF_E_TRANSFORM_STREAM_CHANGE during decode.
     if (!negotiate_output_type()) {
-        return false;
+        Logger::warn("Output type negotiation deferred — will retry after SPS/PPS");
+        // Non-fatal: continue initialization
     }
 
     // Step 7: Signal the MFT to begin streaming
@@ -90,56 +94,72 @@ bool MFVideoDecoder::init(ID3D11Device* device) {
 }
 
 bool MFVideoDecoder::create_decoder_mft() {
-    // Enumerate hardware H.264 decoders
     MFT_REGISTER_TYPE_INFO input_type{};
     input_type.guidMajorType = MFMediaType_Video;
     input_type.guidSubtype = MFVideoFormat_H264;
 
-    IMFActivate** activates = nullptr;
-    UINT32 count = 0;
+    // Try multiple enum strategies — different Windows versions and GPU drivers
+    // register decoders under different flags.
+    struct EnumAttempt {
+        UINT32 flags;
+        const char* description;
+    };
 
-    HRESULT hr = MFTEnumEx(
-        MFT_CATEGORY_VIDEO_DECODER,
-        MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
-        &input_type,
-        nullptr,  // Any output type
-        &activates,
-        &count);
+    const EnumAttempt attempts[] = {
+        { MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
+          "hardware (sorted)" },
+        { MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
+          "sync+async (sorted)" },
+        { MFT_ENUM_FLAG_ALL | MFT_ENUM_FLAG_SORTANDFILTER,
+          "all (sorted)" },
+        { MFT_ENUM_FLAG_ALL,
+          "all (unsorted)" },
+    };
 
-    if (FAILED(hr) || count == 0) {
-        Logger::warn("No hardware H.264 decoder found, trying software");
+    for (const auto& attempt : attempts) {
+        IMFActivate** activates = nullptr;
+        UINT32 count = 0;
 
-        // Fall back to software decoders
-        hr = MFTEnumEx(
+        HRESULT hr = MFTEnumEx(
             MFT_CATEGORY_VIDEO_DECODER,
-            MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
+            attempt.flags,
             &input_type,
             nullptr,
             &activates,
             &count);
 
-        if (FAILED(hr) || count == 0) {
-            Logger::error("No H.264 decoder MFT available: 0x{:08X}", hr);
-            return false;
+        if (SUCCEEDED(hr) && count > 0) {
+            Logger::info("Found {} H.264 decoder(s) via: {}", count, attempt.description);
+
+            hr = activates[0]->ActivateObject(IID_PPV_ARGS(mft_.GetAddressOf()));
+
+            for (UINT32 i = 0; i < count; ++i) {
+                activates[i]->Release();
+            }
+            CoTaskMemFree(activates);
+
+            if (SUCCEEDED(hr)) {
+                Logger::info("H.264 decoder MFT created via: {}", attempt.description);
+                return true;
+            }
+
+            Logger::warn("Failed to activate decoder from '{}': 0x{:08X}",
+                         attempt.description, hr);
+        } else {
+            Logger::debug("No decoders found via: {} (hr=0x{:08X}, count={})",
+                          attempt.description, hr, count);
+
+            if (activates) {
+                for (UINT32 i = 0; i < count; ++i) {
+                    activates[i]->Release();
+                }
+                CoTaskMemFree(activates);
+            }
         }
     }
 
-    // Activate the first (best) decoder
-    hr = activates[0]->ActivateObject(IID_PPV_ARGS(mft_.GetAddressOf()));
-
-    // Release all activation objects
-    for (UINT32 i = 0; i < count; ++i) {
-        activates[i]->Release();
-    }
-    CoTaskMemFree(activates);
-
-    if (FAILED(hr)) {
-        Logger::error("Failed to activate H.264 decoder MFT: 0x{:08X}", hr);
-        return false;
-    }
-
-    Logger::info("H.264 decoder MFT created");
-    return true;
+    Logger::error("No H.264 decoder MFT available on this system");
+    return false;
 }
 
 bool MFVideoDecoder::set_input_type() {

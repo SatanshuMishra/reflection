@@ -369,8 +369,13 @@ void App::on_render_timer() {
     int last_width = 0;
     int last_height = 0;
 
+    static uint64_t total_frames_fed = 0;
+    static uint64_t total_frames_decoded = 0;
+
     OwnedVideoFrame frame;
     while (frame_queue_->try_pop(frame)) {
+        ++total_frames_fed;
+
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
         const bool decoded = decoder_->decode(
             frame.data.data(),
@@ -379,12 +384,25 @@ void App::on_render_timer() {
             texture);
 
         if (decoded && texture) {
+            ++total_frames_decoded;
             D3D11_TEXTURE2D_DESC desc{};
             texture->GetDesc(&desc);
             last_texture = std::move(texture);
             last_width = static_cast<int>(desc.Width);
             last_height = static_cast<int>(desc.Height);
+
+            // Log first successful decode
+            if (total_frames_decoded == 1) {
+                Logger::info("First decoded frame: {}x{} (after {} input frames)",
+                             last_width, last_height, total_frames_fed);
+            }
         }
+    }
+
+    // Periodic stats logging
+    if (total_frames_fed > 0 && total_frames_fed % 300 == 0) {
+        Logger::info("Render stats: fed={}, decoded={}, queue_size={}",
+                     total_frames_fed, total_frames_decoded, frame_queue_->size());
     }
 
     if (last_texture) {
@@ -479,7 +497,12 @@ bool App::start_airplay_service() {
     airplay_service_->set_video_frame_callback(
         [this](const uint8_t* data, size_t size, uint64_t timestamp) {
             // RAOP thread — copy data into queue for main thread consumption.
-            // Do NOT log at debug level here — too noisy at 30-60fps.
+            static bool first_cb = true;
+            if (first_cb) {
+                first_cb = false;
+                Logger::info("App: first video frame callback — size={}, ts={}", size, timestamp);
+            }
+
             if (frame_queue_) {
                 frame_queue_->push(data, size, timestamp);
             }
