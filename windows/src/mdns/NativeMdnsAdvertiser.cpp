@@ -29,7 +29,7 @@ namespace reflection {
 
 namespace {
 
-constexpr int kReannounceIntervalSec = 60;
+constexpr int kSteadyStateIntervalSec = 60;
 constexpr size_t kMdnsBufferSize = 2048;
 
 /// Enumerate active non-loopback IPv4 addresses using GetAdaptersAddresses.
@@ -477,34 +477,33 @@ void NativeMdnsAdvertiser::send_goodbye(const MdnsServiceRecord& record) {
 void NativeMdnsAdvertiser::announce_loop(std::stop_token stop_token) {
     Logger::info("mDNS announcement thread started");
 
-    // RFC 6762 §8.3: Initial announcement burst — send at least 2 unsolicited
-    // responses, 1 second apart. We send 3 for reliability. The first was
-    // already sent synchronously in advertise(), so send 2 more here.
-    for (int burst = 0; burst < 2 && !stop_token.stop_requested(); ++burst) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        if (stop_token.stop_requested()) break;
+    // Exponential backoff announcement schedule.
+    // iPads discover AirPlay services via mDNS multicast queries and
+    // unsolicited announcements. Short initial intervals maximize the
+    // chance of being discovered quickly, then we back off to reduce
+    // network traffic once the service is well-known.
+    //
+    // Schedule (seconds between announcements):
+    //   1, 1, 5, 5, 10, 10, 15, 30, 60, 60, 60, ...
+    constexpr int kSchedule[] = { 1, 1, 5, 5, 10, 10, 15, 30 };
+    constexpr int kScheduleLen = sizeof(kSchedule) / sizeof(kSchedule[0]);
 
-        std::vector<MdnsServiceRecord> snapshot;
-        {
-            std::lock_guard lock(mutex_);
-            snapshot = records_;
-        }
+    int schedule_index = 0;
 
-        for (const auto& record : snapshot) {
-            send_announcement(record);
-        }
-        Logger::debug("Initial mDNS burst {}/2 sent ({} services)",
-                      burst + 1, snapshot.size());
-    }
-
-    // Steady-state: re-announce every 60 seconds
     while (!stop_token.stop_requested()) {
-        for (int i = 0; i < kReannounceIntervalSec && !stop_token.stop_requested(); ++i) {
+        // Determine interval for this cycle
+        const int interval = (schedule_index < kScheduleLen)
+            ? kSchedule[schedule_index]
+            : kSteadyStateIntervalSec;
+
+        // Sleep in 1-second increments for responsive shutdown
+        for (int i = 0; i < interval && !stop_token.stop_requested(); ++i) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
         if (stop_token.stop_requested()) break;
 
+        // Snapshot records under lock, send outside lock
         std::vector<MdnsServiceRecord> snapshot;
         {
             std::lock_guard lock(mutex_);
@@ -515,7 +514,17 @@ void NativeMdnsAdvertiser::announce_loop(std::stop_token stop_token) {
             send_announcement(record);
         }
 
-        Logger::debug("Re-announced {} mDNS services", snapshot.size());
+        if (schedule_index < kScheduleLen) {
+            Logger::debug("mDNS announcement {}/{} sent ({} services, next in {}s)",
+                          schedule_index + 1, kScheduleLen, snapshot.size(),
+                          (schedule_index + 1 < kScheduleLen)
+                              ? kSchedule[schedule_index + 1]
+                              : kSteadyStateIntervalSec);
+        } else {
+            Logger::debug("Re-announced {} mDNS services", snapshot.size());
+        }
+
+        ++schedule_index;
     }
 
     Logger::info("mDNS announcement thread stopped");
