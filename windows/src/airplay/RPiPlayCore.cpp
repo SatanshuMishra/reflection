@@ -132,12 +132,41 @@ void RPiPlayCore::on_video_process(void* cls, raop_ntp_t* /*ntp*/, void* data) {
     auto* self = static_cast<RPiPlayCore*>(cls);
     auto* h264 = static_cast<h264_decode_struct*>(data);
 
-    if (!h264 || !h264->data || h264->data_len <= 0) return;
+    if (!h264 || !h264->data || h264->data_len <= 0) {
+        Logger::warn("on_video_process: null or empty h264 data");
+        return;
+    }
+
+    // Log first frame to confirm callback is firing
+    static bool first_frame = true;
+    if (first_frame) {
+        first_frame = false;
+        const auto* d = reinterpret_cast<const unsigned char*>(h264->data);
+        if (h264->data_len >= 5) {
+            Logger::info("RPiPlay first video frame: type={}, size={}, "
+                         "bytes=[{:02X} {:02X} {:02X} {:02X} {:02X}]",
+                         h264->frame_type, h264->data_len,
+                         d[0], d[1], d[2], d[3], d[4]);
+        } else {
+            Logger::info("RPiPlay first video frame: type={}, size={}",
+                         h264->frame_type, h264->data_len);
+        }
+    }
+
+    // Log frame count periodically
+    static uint64_t frame_count = 0;
+    ++frame_count;
+    if (frame_count % 300 == 0) {
+        Logger::info("RPiPlay video frames received: {}", frame_count);
+    }
 
     VideoFrameCallback cb;
     {
         std::lock_guard lock(self->callback_mutex_);
-        if (!self->video_callback_) return;
+        if (!self->video_callback_) {
+            Logger::warn("on_video_process: no video callback registered");
+            return;
+        }
         cb = self->video_callback_;
     }
 
