@@ -358,36 +358,40 @@ void App::cleanup_mirror_session() {
 void App::on_render_timer() {
     if (!mirror_window_ || !mirror_window_->renderer()) return;
     if (!frame_queue_) return;
+    if (!decoder_ || !decoder_->is_initialized()) return;
 
-    // Drain the queue — keep only the latest frame for lowest latency
-    OwnedVideoFrame latest_frame;
-    bool has_frame = false;
-    OwnedVideoFrame temp;
-    while (frame_queue_->try_pop(temp)) {
-        latest_frame = std::move(temp);
-        has_frame = true;
-    }
+    // Feed ALL queued frames to the decoder in order.
+    // H.264 requires every NAL unit in sequence — SPS/PPS parameter sets
+    // must reach the decoder before IDR frames, and P/B frames need their
+    // reference frames. Dropping ANY frame can prevent the decoder from
+    // ever producing output.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> last_texture;
+    int last_width = 0;
+    int last_height = 0;
 
-    if (has_frame && decoder_ && decoder_->is_initialized()) {
-        // Feed the latest NAL unit to the decoder
+    OwnedVideoFrame frame;
+    while (frame_queue_->try_pop(frame)) {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-        bool decoded = decoder_->decode(
-            latest_frame.data.data(),
-            latest_frame.data.size(),
-            latest_frame.timestamp,
+        const bool decoded = decoder_->decode(
+            frame.data.data(),
+            frame.data.size(),
+            frame.timestamp,
             texture);
 
         if (decoded && texture) {
-            // Get texture dimensions for aspect-ratio rendering
             D3D11_TEXTURE2D_DESC desc{};
             texture->GetDesc(&desc);
-
-            mirror_window_->renderer()->render_video_frame(
-                texture.Get(),
-                static_cast<int>(desc.Width),
-                static_cast<int>(desc.Height));
-            return;
+            last_texture = std::move(texture);
+            last_width = static_cast<int>(desc.Width);
+            last_height = static_cast<int>(desc.Height);
         }
+    }
+
+    if (last_texture) {
+        // Render the most recently decoded frame
+        mirror_window_->renderer()->render_video_frame(
+            last_texture.Get(), last_width, last_height);
+        return;
     }
 
     // No decoded frame available — render blank background

@@ -187,6 +187,21 @@ bool MFVideoDecoder::negotiate_output_type() {
             if (SUCCEEDED(hr)) {
                 Logger::debug("MFT output type set: NV12");
                 output_type_set_ = true;
+
+                // Read output stride for software fallback path
+                UINT32 w = 0, h = 0;
+                if (SUCCEEDED(MFGetAttributeSize(
+                        output_type.Get(), MF_MT_FRAME_SIZE, &w, &h))) {
+                    UINT32 stride_val = 0;
+                    if (SUCCEEDED(output_type->GetUINT32(
+                            MF_MT_DEFAULT_STRIDE, &stride_val)) && stride_val != 0) {
+                        output_stride_ = static_cast<LONG>(stride_val);
+                    } else {
+                        output_stride_ = static_cast<LONG>(w);
+                    }
+                    Logger::debug("MFT output: {}x{}, stride={}", w, h, output_stride_);
+                }
+
                 return true;
             }
         }
@@ -203,6 +218,20 @@ bool MFVideoDecoder::negotiate_output_type() {
             Logger::warn("Using non-NV12 output type (subtype GUID ends: ...{:08X})",
                          subtype.Data1);
             output_type_set_ = true;
+
+            // Read stride for fallback type too
+            UINT32 w = 0, h = 0;
+            if (SUCCEEDED(MFGetAttributeSize(
+                    fallback.Get(), MF_MT_FRAME_SIZE, &w, &h))) {
+                UINT32 stride_val = 0;
+                if (SUCCEEDED(fallback->GetUINT32(
+                        MF_MT_DEFAULT_STRIDE, &stride_val)) && stride_val != 0) {
+                    output_stride_ = static_cast<LONG>(stride_val);
+                } else {
+                    output_stride_ = static_cast<LONG>(w);
+                }
+            }
+
             return true;
         }
     }
@@ -217,6 +246,17 @@ bool MFVideoDecoder::decode(
 ) {
     if (!initialized_ || !mft_) return false;
     if (!data || size == 0) return false;
+
+    // Diagnostic: log first frame details to confirm Annex B format
+    if (!first_frame_logged_) {
+        first_frame_logged_ = true;
+        if (size >= 5) {
+            Logger::info("First H.264 frame: size={}, bytes=[{:02X} {:02X} {:02X} {:02X} {:02X}]",
+                         size, data[0], data[1], data[2], data[3], data[4]);
+        } else {
+            Logger::info("First H.264 frame: size={}", size);
+        }
+    }
 
     // Step 1: Create IMFMediaBuffer with a copy of the NAL data
     Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
@@ -261,7 +301,15 @@ bool MFVideoDecoder::decode(
     }
 
     if (FAILED(hr)) {
-        Logger::debug("ProcessInput failed: 0x{:08X}", hr);
+        // Log at ERROR level — this often indicates missing SPS/PPS or wrong format
+        if (size >= 4) {
+            Logger::error("ProcessInput failed: 0x{:08X}, size={}, "
+                          "first_bytes=[{:02X} {:02X} {:02X} {:02X}]",
+                          hr, size,
+                          data[0], data[1], data[2], data[3]);
+        } else {
+            Logger::error("ProcessInput failed: 0x{:08X}, size={}", hr, size);
+        }
         return false;
     }
 
@@ -324,7 +372,7 @@ bool MFVideoDecoder::try_get_output_frame(
     }
 
     if (FAILED(hr)) {
-        Logger::debug("ProcessOutput failed: 0x{:08X}", hr);
+        Logger::error("ProcessOutput failed: 0x{:08X}", hr);
         return false;
     }
 
@@ -343,7 +391,7 @@ bool MFVideoDecoder::extract_texture_from_sample(
     Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
     HRESULT hr = sample->ConvertToContiguousBuffer(buffer.GetAddressOf());
     if (FAILED(hr)) {
-        Logger::debug("ConvertToContiguousBuffer failed: 0x{:08X}", hr);
+        Logger::error("ConvertToContiguousBuffer failed: 0x{:08X}", hr);
         return false;
     }
 
@@ -360,6 +408,20 @@ bool MFVideoDecoder::extract_texture_from_sample(
     }
 
     // Software fallback: create a texture from CPU memory
+    // Determine actual row pitch — MF decoders may pad rows for alignment
+    LONG actual_stride = output_stride_;
+
+    // Try IMF2DBuffer for the most accurate stride
+    Microsoft::WRL::ComPtr<IMF2DBuffer> buffer_2d;
+    if (SUCCEEDED(buffer.As(&buffer_2d))) {
+        BYTE* scanline0 = nullptr;
+        LONG pitch_2d = 0;
+        if (SUCCEEDED(buffer_2d->Lock2D(&scanline0, &pitch_2d))) {
+            actual_stride = (pitch_2d < 0) ? -pitch_2d : pitch_2d;
+            buffer_2d->Unlock2D();
+        }
+    }
+
     BYTE* raw_data = nullptr;
     DWORD max_length = 0;
     DWORD current_length = 0;
@@ -381,6 +443,11 @@ bool MFVideoDecoder::extract_texture_from_sample(
         return false;
     }
 
+    // Use width as final fallback if stride is still 0
+    if (actual_stride <= 0) {
+        actual_stride = static_cast<LONG>(width);
+    }
+
     // Create a staging NV12 texture and copy the data
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
@@ -392,16 +459,17 @@ bool MFVideoDecoder::extract_texture_from_sample(
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-    // NV12 layout: Y plane is width*height, UV plane is width*(height/2)
+    // NV12 layout: Y plane (width*height) + UV plane (width*(height/2))
     D3D11_SUBRESOURCE_DATA init_data{};
     init_data.pSysMem = raw_data;
-    init_data.SysMemPitch = width;  // Y plane row pitch
+    init_data.SysMemPitch = static_cast<UINT>(actual_stride);
 
     hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
     buffer->Unlock();
 
     if (FAILED(hr)) {
-        Logger::debug("CreateTexture2D (software fallback) failed: 0x{:08X}", hr);
+        Logger::error("CreateTexture2D (software fallback) failed: 0x{:08X}, "
+                      "{}x{}, stride={}", hr, width, height, actual_stride);
         return false;
     }
 
@@ -429,6 +497,8 @@ void MFVideoDecoder::shutdown() {
     device_.Reset();
     device_manager_token_ = 0;
     output_type_set_ = false;
+    output_stride_ = 0;
+    first_frame_logged_ = false;
     initialized_ = false;
 }
 
