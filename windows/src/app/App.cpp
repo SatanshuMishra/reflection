@@ -287,10 +287,11 @@ void App::on_ipad_connected() {
         // Keep the window open — it will show the background color
     }
 
-    // Clear any stale frames from the queue
-    if (frame_queue_) {
-        frame_queue_->clear();
-    }
+    // DO NOT clear the frame queue here. RPiPlay's RAOP thread starts
+    // sending SPS/PPS and IDR frames immediately on connection — often
+    // BEFORE decoder init completes (~100ms). Clearing the queue would
+    // discard the SPS/PPS that the decoder needs to produce its first
+    // output frame. The queue contents are exactly what we need.
 
     // Start the render timer (~60fps)
     SetTimer(message_hwnd_, constants::kRenderTimerId,
