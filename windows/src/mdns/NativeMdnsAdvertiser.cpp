@@ -260,11 +260,12 @@ bool NativeMdnsAdvertiser::advertise(const MdnsServiceRecord& record) {
         }
     }
 
-    // Send initial announcements (outside lock — I/O should not hold mutex)
-    send_announcement(record);
-
+    // Send one immediate announcement, then the announce_loop handles
+    // the RFC 6762 §8.3 initial burst (2 more at 1-second intervals).
     Logger::info("Advertising mDNS service: {} ({})",
                  record.service_name, record.service_type);
+
+    send_announcement(record);
     return true;
 }
 
@@ -474,18 +475,36 @@ void NativeMdnsAdvertiser::send_goodbye(const MdnsServiceRecord& record) {
 }
 
 void NativeMdnsAdvertiser::announce_loop(std::stop_token stop_token) {
-    Logger::info("mDNS re-announcement thread started (interval: {}s)",
-                 kReannounceIntervalSec);
+    Logger::info("mDNS announcement thread started");
 
+    // RFC 6762 §8.3: Initial announcement burst — send at least 2 unsolicited
+    // responses, 1 second apart. We send 3 for reliability. The first was
+    // already sent synchronously in advertise(), so send 2 more here.
+    for (int burst = 0; burst < 2 && !stop_token.stop_requested(); ++burst) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (stop_token.stop_requested()) break;
+
+        std::vector<MdnsServiceRecord> snapshot;
+        {
+            std::lock_guard lock(mutex_);
+            snapshot = records_;
+        }
+
+        for (const auto& record : snapshot) {
+            send_announcement(record);
+        }
+        Logger::debug("Initial mDNS burst {}/2 sent ({} services)",
+                      burst + 1, snapshot.size());
+    }
+
+    // Steady-state: re-announce every 60 seconds
     while (!stop_token.stop_requested()) {
-        // Sleep in small increments to respond to stop quickly
         for (int i = 0; i < kReannounceIntervalSec && !stop_token.stop_requested(); ++i) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
         if (stop_token.stop_requested()) break;
 
-        // Snapshot records under lock, then send outside lock
         std::vector<MdnsServiceRecord> snapshot;
         {
             std::lock_guard lock(mutex_);
@@ -499,7 +518,7 @@ void NativeMdnsAdvertiser::announce_loop(std::stop_token stop_token) {
         Logger::debug("Re-announced {} mDNS services", snapshot.size());
     }
 
-    Logger::info("mDNS re-announcement thread stopped");
+    Logger::info("mDNS announcement thread stopped");
 }
 
 } // namespace reflection
