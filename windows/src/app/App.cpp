@@ -361,11 +361,17 @@ void App::on_render_timer() {
     if (!frame_queue_) return;
     if (!decoder_ || !decoder_->is_initialized()) return;
 
-    // Feed ALL queued frames to the decoder in order.
-    // H.264 requires every NAL unit in sequence — SPS/PPS parameter sets
-    // must reach the decoder before IDR frames, and P/B frames need their
-    // reference frames. Dropping ANY frame can prevent the decoder from
-    // ever producing output.
+    // Feed queued frames to the decoder, but limit per tick to keep the
+    // main thread responsive. Software H.264 decode of a 1080p frame takes
+    // ~10-30ms. If we decode too many frames in one timer tick (16ms), the
+    // Win32 message pump starves and the window goes "Not Responding".
+    //
+    // Strategy: decode up to kMaxFramesPerTick frames. Any remaining frames
+    // stay in the queue for the next tick. At 30fps input and 60fps timer,
+    // there's typically 0-1 frames per tick, so the limit only matters
+    // during the initial connection burst.
+    constexpr int kMaxFramesPerTick = 4;
+
     Microsoft::WRL::ComPtr<ID3D11Texture2D> last_texture;
     int last_width = 0;
     int last_height = 0;
@@ -373,8 +379,10 @@ void App::on_render_timer() {
     static uint64_t total_frames_fed = 0;
     static uint64_t total_frames_decoded = 0;
 
+    int frames_this_tick = 0;
     OwnedVideoFrame frame;
-    while (frame_queue_->try_pop(frame)) {
+    while (frames_this_tick < kMaxFramesPerTick && frame_queue_->try_pop(frame)) {
+        ++frames_this_tick;
         ++total_frames_fed;
 
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
