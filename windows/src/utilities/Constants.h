@@ -128,4 +128,18 @@ constexpr std::wstring_view kLogFileName = L"reflection.log";
 constexpr uint32_t kTrayIconId = 1;
 constexpr uint32_t kWmTrayIcon = 0x8000 + 1; // WM_APP + 1
 
+// --------------------------------------------------------------------------
+// Custom Window Messages (WM_APP = 0x8000)
+// --------------------------------------------------------------------------
+// Note: kWmTrayIcon uses WM_APP + 1 (0x8001)
+constexpr uint32_t kWmIpadConnected = 0x8000 + 2;       // WM_APP + 2
+constexpr uint32_t kWmIpadDisconnected = 0x8000 + 3;     // WM_APP + 3
+constexpr uint32_t kWmMirrorWindowClosed = 0x8000 + 4;   // WM_APP + 4
+
+// --------------------------------------------------------------------------
+// Render Timer
+// --------------------------------------------------------------------------
+constexpr uintptr_t kRenderTimerId = 1;
+constexpr uint32_t kRenderTimerIntervalMs = 16;  // ~60fps
+
 } // namespace reflection::constants
