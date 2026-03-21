@@ -25,7 +25,7 @@ struct OwnedVideoFrame {
 /// a stale frame is worse than dropping it.
 class VideoFrameQueue {
 public:
-    static constexpr size_t kDefaultCapacity = 4;
+    static constexpr size_t kDefaultCapacity = 16;
 
     explicit VideoFrameQueue(size_t capacity = kDefaultCapacity)
         : capacity_(capacity)

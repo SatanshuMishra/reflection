@@ -76,6 +76,12 @@ private:
     // Track output type negotiation
     bool output_type_set_ = false;
 
+    // NV12 output stride (may differ from width due to alignment padding)
+    LONG output_stride_ = 0;
+
+    // Diagnostic: log first frame details once
+    bool first_frame_logged_ = false;
+
     /// Find and create the hardware H.264 decoder MFT.
     [[nodiscard]] bool create_decoder_mft();
 
