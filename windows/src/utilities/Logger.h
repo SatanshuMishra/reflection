@@ -12,7 +12,11 @@ namespace reflection {
 class Logger {
 public:
     /// Initialize the logger. Call once at startup.
+    /// Allocates a console window and opens a log file.
     static void init();
+
+    /// Shut down the logger. Closes log file and frees console.
+    static void shutdown();
 
     /// Log at INFO level.
     template <typename... Args>

@@ -118,5 +118,6 @@ int WINAPI wWinMain(
     const int exit_code = app.run();
 
     reflection::Logger::info("Reflection exiting with code {}", exit_code);
+    reflection::Logger::shutdown();
     return exit_code;
 }

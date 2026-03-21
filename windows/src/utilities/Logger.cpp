@@ -6,6 +6,7 @@
 #include <Windows.h>
 
 #include <chrono>
+#include <cstdio>
 #include <format>
 #include <mutex>
 
@@ -13,12 +14,52 @@ namespace reflection {
 
 namespace {
     std::mutex g_log_mutex;
-    bool g_initialized = false;
+    FILE* g_log_file = nullptr;
+    bool g_console_attached = false;
 } // namespace
 
 void Logger::init() {
     std::lock_guard lock(g_log_mutex);
-    g_initialized = true;
+
+    // Allocate a console window so logs are visible when running the GUI app.
+    // This is essential for debugging — WIN32 apps have no console by default.
+    if (AllocConsole()) {
+        FILE* dummy = nullptr;
+        freopen_s(&dummy, "CONOUT$", "w", stdout);
+        freopen_s(&dummy, "CONOUT$", "w", stderr);
+        g_console_attached = true;
+
+        // Set console title
+        SetConsoleTitleW(L"Reflection — Log Output");
+    }
+
+    // Also open a log file next to the executable for post-mortem analysis
+    wchar_t exe_path[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, exe_path, MAX_PATH) > 0) {
+        // Replace .exe with .log
+        std::wstring log_path(exe_path);
+        const auto dot_pos = log_path.rfind(L'.');
+        if (dot_pos != std::wstring::npos) {
+            log_path = log_path.substr(0, dot_pos);
+        }
+        log_path += L".log";
+
+        _wfopen_s(&g_log_file, log_path.c_str(), L"w");
+    }
+}
+
+void Logger::shutdown() {
+    std::lock_guard lock(g_log_mutex);
+
+    if (g_log_file) {
+        fclose(g_log_file);
+        g_log_file = nullptr;
+    }
+
+    if (g_console_attached) {
+        FreeConsole();
+        g_console_attached = false;
+    }
 }
 
 void Logger::log(std::string_view level, const std::string& message) {
@@ -41,11 +82,20 @@ void Logger::log(std::string_view level, const std::string& message) {
     {
         std::lock_guard lock(g_log_mutex);
 
-        // Output to debugger
+        // Output to debugger (Visual Studio Output window)
         OutputDebugStringA(formatted.c_str());
 
-        // Also write to stderr for console builds / CI
-        fprintf(stderr, "%s", formatted.c_str());
+        // Output to console (allocated on startup)
+        if (g_console_attached) {
+            fprintf(stderr, "%s", formatted.c_str());
+            fflush(stderr);
+        }
+
+        // Output to log file
+        if (g_log_file) {
+            fprintf(g_log_file, "%s", formatted.c_str());
+            fflush(g_log_file);
+        }
     }
 }
 
