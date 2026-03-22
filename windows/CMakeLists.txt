@@ -13,6 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Build options
 option(BUILD_TESTS "Build unit tests" ON)
 option(BUILD_INSTALLER "Build MSI installer" OFF)
+option(USE_UXPLAY "Use UxPlay instead of RPiPlay for AirPlay protocol" ON)
 
 # vcpkg integration (auto-detected via CMAKE_TOOLCHAIN_FILE)
 find_package(OpenSSL REQUIRED)
@@ -28,20 +29,47 @@ if(NOT PLIST_INCLUDE_DIR OR NOT PLIST_LIBRARY)
 endif()
 message(STATUS "Found libplist: ${PLIST_LIBRARY}")
 
-# FDK-AAC via vcpkg (optional — needed for audio in later milestones)
+# GStreamer — required for decode/render pipeline when USE_UXPLAY is ON
 find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
+if(USE_UXPLAY)
+    if(NOT PkgConfig_FOUND)
+        message(FATAL_ERROR
+            "PkgConfig is required for GStreamer discovery.\n"
+            "On MSYS2: pacman -S mingw-w64-ucrt-x86_64-pkg-config\n"
+            "Or set PKG_CONFIG_EXECUTABLE manually."
+        )
+    endif()
+
+    pkg_check_modules(GST REQUIRED gstreamer-1.0)
+    pkg_check_modules(GST_APP REQUIRED gstreamer-app-1.0)
+    pkg_check_modules(GST_VIDEO REQUIRED gstreamer-video-1.0)
+
+    message(STATUS "Found GStreamer: ${GST_VERSION}")
+    message(STATUS "  Include dirs: ${GST_INCLUDE_DIRS}")
+    message(STATUS "  Libraries: ${GST_LIBRARIES}")
+endif()
+
+# FDK-AAC via vcpkg (optional — only needed for legacy RPiPlay pipeline)
+if(NOT USE_UXPLAY AND PkgConfig_FOUND)
     pkg_check_modules(FDK_AAC fdk-aac)
 endif()
-if(NOT FDK_AAC_FOUND)
+if(NOT USE_UXPLAY AND NOT FDK_AAC_FOUND)
     find_library(FDK_AAC_LIBRARIES NAMES fdk-aac QUIET)
     find_path(FDK_AAC_INCLUDE_DIRS NAMES fdk-aac/aacenc_lib.h QUIET)
 endif()
 
 # --------------------------------------------------------------------------
-# AirPlay core library (RPiPlay lib/ — downloaded via FetchContent)
+# AirPlay core library
 # --------------------------------------------------------------------------
-add_subdirectory(lib/airplay)
+if(USE_UXPLAY)
+    message(STATUS "Using UxPlay for AirPlay protocol (quality negotiation enabled)")
+    add_subdirectory(lib/uxplay)
+    set(AIRPLAY_CORE_LIB uxplay_core)
+else()
+    message(STATUS "Using RPiPlay for AirPlay protocol (legacy)")
+    add_subdirectory(lib/airplay)
+    set(AIRPLAY_CORE_LIB airplay_core)
+endif()
 
 # --------------------------------------------------------------------------
 # mjansson/mdns (header-only)
@@ -66,7 +94,6 @@ set(REFLECTION_SOURCES
     src/airplay/AirPlayCallbacks.cpp
     src/airplay/AirPlayCallbackBridge.cpp
     src/airplay/AirPlayTypes.cpp
-    src/airplay/RPiPlayCore.cpp
     src/mdns/MdnsServiceRecord.cpp
     src/mdns/MjanssonMdnsAdvertiser.cpp
     src/mdns/NativeMdnsAdvertiser.cpp
@@ -83,15 +110,34 @@ set(REFLECTION_SOURCES
     src/utilities/UpdateChecker.cpp
 )
 
+# Add the appropriate AirPlay core wrapper and pipeline
+if(USE_UXPLAY)
+    list(APPEND REFLECTION_SOURCES
+        src/airplay/UxPlayCore.cpp
+        src/pipeline/GStreamerPipeline.cpp
+    )
+else()
+    list(APPEND REFLECTION_SOURCES src/airplay/RPiPlayCore.cpp)
+endif()
+
 add_executable(Reflection WIN32 ${REFLECTION_SOURCES})
 
 target_include_directories(Reflection PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+# GStreamer include directories
+if(USE_UXPLAY)
+    target_include_directories(Reflection PRIVATE
+        ${GST_INCLUDE_DIRS}
+        ${GST_APP_INCLUDE_DIRS}
+        ${GST_VIDEO_INCLUDE_DIRS}
+    )
+endif()
+
 target_link_libraries(Reflection PRIVATE
     # Vendored libraries
-    airplay_core
+    ${AIRPLAY_CORE_LIB}
     mdns
 
     # vcpkg dependencies
@@ -117,6 +163,20 @@ target_link_libraries(Reflection PRIVATE
     winhttp
 )
 
+# Link GStreamer libraries
+if(USE_UXPLAY)
+    target_link_libraries(Reflection PRIVATE
+        ${GST_LIBRARIES}
+        ${GST_APP_LIBRARIES}
+        ${GST_VIDEO_LIBRARIES}
+    )
+    target_link_directories(Reflection PRIVATE
+        ${GST_LIBRARY_DIRS}
+        ${GST_APP_LIBRARY_DIRS}
+        ${GST_VIDEO_LIBRARY_DIRS}
+    )
+endif()
+
 # Link FDK-AAC if found
 if(FDK_AAC_LIBRARIES)
     target_link_libraries(Reflection PRIVATE ${FDK_AAC_LIBRARIES})
@@ -132,6 +192,11 @@ target_compile_definitions(Reflection PRIVATE
     _UNICODE
     _CRT_SECURE_NO_WARNINGS
 )
+
+# UxPlay compile definition
+if(USE_UXPLAY)
+    target_compile_definitions(Reflection PRIVATE USE_UXPLAY=1)
+endif()
 
 # Application manifest for DPI awareness and UTF-8
 set_target_properties(Reflection PROPERTIES

@@ -2,7 +2,11 @@
 #include "app/SystemTray.h"
 #include "airplay/AirPlayService.h"
 #include "airplay/AirPlayTypes.h"
+#ifdef USE_UXPLAY
+#include "airplay/UxPlayCore.h"
+#else
 #include "airplay/RPiPlayCore.h"
+#endif
 #include "decode/MFVideoDecoder.h"
 #include "decode/VideoFrameQueue.h"
 #include "mdns/NativeMdnsAdvertiser.h"
@@ -550,7 +554,11 @@ bool App::start_airplay_service() {
     Logger::info("Starting AirPlay service...");
 
     // Create production dependencies
+#ifdef USE_UXPLAY
+    auto core = std::make_unique<UxPlayCore>();
+#else
     auto core = std::make_unique<RPiPlayCore>();
+#endif
     auto mdns = std::make_unique<NativeMdnsAdvertiser>();
 
     airplay_service_ = std::make_unique<AirPlayService>(
