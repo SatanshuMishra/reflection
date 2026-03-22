@@ -15,76 +15,31 @@
 
 namespace reflection {
 
-namespace {
-
-/// Map MFVideoFormat GUID to DXGI_FORMAT and human-readable name.
-struct FormatMapping {
-    GUID mf_format;
-    DXGI_FORMAT dxgi_format;
-    const char* name;
-};
-
-const FormatMapping kPreferredFormats[] = {
-    { MFVideoFormat_RGB32,  DXGI_FORMAT_B8G8R8A8_UNORM, "RGB32 (BGRA)" },
-    { MFVideoFormat_ARGB32, DXGI_FORMAT_B8G8R8A8_UNORM, "ARGB32 (BGRA)" },
-    { MFVideoFormat_NV12,   DXGI_FORMAT_NV12,           "NV12" },
-};
-
-} // namespace
-
 MFVideoDecoder::MFVideoDecoder() = default;
 MFVideoDecoder::~MFVideoDecoder() { shutdown(); }
 
-bool MFVideoDecoder::init(ID3D11Device* device) {
+bool MFVideoDecoder::init() {
     if (initialized_) return true;
-    if (!device) {
-        Logger::error("MFVideoDecoder::init called with null device");
-        return false;
-    }
 
-    Logger::info("Initializing Media Foundation H.264 decoder");
-    device_ = device;
+    Logger::info("Initializing Media Foundation H.264 decoder (CPU-only)");
 
     if (!create_decoder_mft()) return false;
-
-    // DO NOT set a D3D device manager on the MFT. Without it, the software
-    // decoder allocates plain CPU memory buffers. This is critical because:
-    //
-    // 1. The decode runs on a background thread while the main thread uses
-    //    the D3D11 immediate context for rendering. The immediate context
-    //    is NOT thread-safe.
-    // 2. If we give the MFT our device manager, it allocates DXGI-backed
-    //    buffers. IMFMediaBuffer::Lock() on DXGI buffers internally uses
-    //    the immediate context to copy GPU→CPU, which deadlocks with the
-    //    main thread's Draw/Present calls.
-    // 3. We do NV12→BGRA conversion in CPU anyway, so GPU-backed buffers
-    //    provide no benefit — they just add a GPU→CPU copy that we skip
-    //    by using plain memory buffers.
-    //
-    // When hardware DXVA2 decode is implemented in the future (dedicated
-    // render thread), the device manager can be re-enabled.
-    Logger::info("Using CPU-only decode (no DXVA2 device manager)");
-
-    HRESULT hr;
-
     if (!set_input_type()) return false;
 
-    // Output type negotiation — may be deferred if MFT needs SPS/PPS first
+    // Output type negotiation may be deferred until SPS/PPS arrives
     if (!negotiate_output_type()) {
-        Logger::warn("Output type negotiation deferred — will retry after SPS/PPS");
+        Logger::warn("Output type deferred — will retry after SPS/PPS");
     }
 
-    hr = mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+    HRESULT hr = mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     if (FAILED(hr)) {
         Logger::error("BEGIN_STREAMING failed: 0x{:08X}", hr);
         return false;
     }
-
     mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
     initialized_ = true;
-    Logger::info("Media Foundation decoder initialized (output: {})",
-                 output_type_set_ ? "configured" : "pending");
+    Logger::info("Media Foundation decoder initialized");
     return true;
 }
 
@@ -95,7 +50,6 @@ bool MFVideoDecoder::create_decoder_mft() {
 
     struct EnumAttempt { UINT32 flags; const char* desc; };
     const EnumAttempt attempts[] = {
-        { MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, "hardware" },
         { MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER, "sync+async" },
         { MFT_ENUM_FLAG_ALL | MFT_ENUM_FLAG_SORTANDFILTER, "all (sorted)" },
         { MFT_ENUM_FLAG_ALL, "all" },
@@ -144,57 +98,40 @@ bool MFVideoDecoder::set_input_type() {
 }
 
 bool MFVideoDecoder::negotiate_output_type() {
-    // Enumerate available output types and pick the best one.
-    // Priority: RGB32 > ARGB32 > NV12
-    // RGB32/ARGB32 produce single-plane BGRA textures, avoiding all NV12
-    // multiplanar format handling issues.
+    for (DWORD i = 0; ; ++i) {
+        Microsoft::WRL::ComPtr<IMFMediaType> output_type;
+        HRESULT hr = mft_->GetOutputAvailableType(0, i, output_type.GetAddressOf());
+        if (hr == MF_E_NO_MORE_TYPES) break;
+        if (FAILED(hr)) break;
 
-    for (const auto& preferred : kPreferredFormats) {
-        for (DWORD i = 0; ; ++i) {
-            Microsoft::WRL::ComPtr<IMFMediaType> output_type;
-            HRESULT hr = mft_->GetOutputAvailableType(0, i, output_type.GetAddressOf());
-            if (hr == MF_E_NO_MORE_TYPES) break;
-            if (FAILED(hr)) break;
+        GUID subtype{};
+        if (FAILED(output_type->GetGUID(MF_MT_SUBTYPE, &subtype))) continue;
 
-            GUID subtype{};
-            if (FAILED(output_type->GetGUID(MF_MT_SUBTYPE, &subtype))) continue;
+        if (subtype == MFVideoFormat_NV12) {
+            hr = mft_->SetOutputType(0, output_type.Get(), 0);
+            if (SUCCEEDED(hr)) {
+                output_type_set_ = true;
 
-            if (subtype == preferred.mf_format) {
-                hr = mft_->SetOutputType(0, output_type.Get(), 0);
-                if (SUCCEEDED(hr)) {
-                    output_mf_format_ = preferred.mf_format;
-                    output_dxgi_format_ = preferred.dxgi_format;
-                    output_type_set_ = true;
-
-                    // Read stride
-                    UINT32 w = 0, h = 0;
-                    if (SUCCEEDED(MFGetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE, &w, &h))) {
-                        UINT32 stride_val = 0;
-                        if (SUCCEEDED(output_type->GetUINT32(MF_MT_DEFAULT_STRIDE, &stride_val))) {
-                            output_stride_ = static_cast<LONG>(stride_val);
-                        } else {
-                            // RGB32 stride = width * 4 bytes per pixel
-                            output_stride_ = (preferred.dxgi_format == DXGI_FORMAT_B8G8R8A8_UNORM)
-                                ? static_cast<LONG>(w * 4)
-                                : static_cast<LONG>(w);
-                        }
-                        Logger::info("MFT output: {} {}x{}, stride={}",
-                                     preferred.name, w, h, output_stride_);
-                    }
-                    return true;
+                UINT32 w = 0, h = 0;
+                if (SUCCEEDED(MFGetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE, &w, &h))) {
+                    UINT32 stride_val = 0;
+                    output_stride_ = SUCCEEDED(output_type->GetUINT32(MF_MT_DEFAULT_STRIDE, &stride_val))
+                        ? static_cast<LONG>(stride_val)
+                        : static_cast<LONG>(w);
+                    Logger::info("MFT output: NV12 {}x{}, stride={}", w, h, output_stride_);
                 }
+                return true;
             }
         }
     }
 
-    Logger::error("Failed to set any output type on MFT");
+    Logger::error("Failed to set output type");
     return false;
 }
 
 bool MFVideoDecoder::decode(
     const uint8_t* data, size_t size, uint64_t timestamp,
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv
+    DecodedFrame& out_frame
 ) {
     if (!initialized_ || !mft_) return false;
     if (!data || size == 0) return false;
@@ -207,21 +144,19 @@ bool MFVideoDecoder::decode(
         }
     }
 
-    // Create MF sample from NAL data
+    // Create MF sample
     Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
     HRESULT hr = MFCreateMemoryBuffer(static_cast<DWORD>(size), buffer.GetAddressOf());
     if (FAILED(hr)) return false;
 
     BYTE* buf_ptr = nullptr;
-    hr = buffer->Lock(&buf_ptr, nullptr, nullptr);
-    if (FAILED(hr)) return false;
+    if (FAILED(buffer->Lock(&buf_ptr, nullptr, nullptr))) return false;
     memcpy(buf_ptr, data, size);
     buffer->Unlock();
     buffer->SetCurrentLength(static_cast<DWORD>(size));
 
     Microsoft::WRL::ComPtr<IMFSample> sample;
-    hr = MFCreateSample(sample.GetAddressOf());
-    if (FAILED(hr)) return false;
+    if (FAILED(MFCreateSample(sample.GetAddressOf()))) return false;
     sample->AddBuffer(buffer.Get());
     sample->SetSampleTime(static_cast<LONGLONG>(timestamp) * 10);
 
@@ -229,7 +164,7 @@ bool MFVideoDecoder::decode(
     hr = mft_->ProcessInput(0, sample.Get(), 0);
 
     if (hr == MF_E_NOTACCEPTING) {
-        if (try_get_output_frame(out_texture, out_srv)) return true;
+        if (try_get_output_frame(out_frame)) return true;
         return false;
     }
 
@@ -241,50 +176,38 @@ bool MFVideoDecoder::decode(
         return false;
     }
 
-    return try_get_output_frame(out_texture, out_srv);
+    return try_get_output_frame(out_frame);
 }
 
-bool MFVideoDecoder::try_get_output_frame(
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv
-) {
+bool MFVideoDecoder::try_get_output_frame(DecodedFrame& out_frame) {
     MFT_OUTPUT_DATA_BUFFER output_buffer{};
     output_buffer.dwStreamID = 0;
 
     MFT_OUTPUT_STREAM_INFO stream_info{};
-    HRESULT hr = mft_->GetOutputStreamInfo(0, &stream_info);
-    if (FAILED(hr)) return false;
+    if (FAILED(mft_->GetOutputStreamInfo(0, &stream_info))) return false;
 
     Microsoft::WRL::ComPtr<IMFSample> output_sample;
     if (!(stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES)) {
-        hr = MFCreateSample(output_sample.GetAddressOf());
-        if (FAILED(hr)) return false;
+        if (FAILED(MFCreateSample(output_sample.GetAddressOf()))) return false;
 
         Microsoft::WRL::ComPtr<IMFMediaBuffer> out_buf;
         DWORD buf_size = (stream_info.cbSize > 0) ? stream_info.cbSize : (1920 * 1080 * 4);
-        hr = MFCreateMemoryBuffer(buf_size, out_buf.GetAddressOf());
-        if (FAILED(hr)) return false;
-
+        if (FAILED(MFCreateMemoryBuffer(buf_size, out_buf.GetAddressOf()))) return false;
         output_sample->AddBuffer(out_buf.Get());
         output_buffer.pSample = output_sample.Get();
     }
 
     DWORD status = 0;
-    hr = mft_->ProcessOutput(0, 1, &output_buffer, &status);
+    HRESULT hr = mft_->ProcessOutput(0, 1, &output_buffer, &status);
 
-    if (output_buffer.pEvents) {
-        output_buffer.pEvents->Release();
-    }
+    if (output_buffer.pEvents) output_buffer.pEvents->Release();
 
     if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) return false;
 
     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
         Logger::info("MFT stream change — renegotiating output type");
-        if (!negotiate_output_type()) {
-            Logger::error("Failed to renegotiate output type");
-            return false;
-        }
-        return try_get_output_frame(out_texture, out_srv);
+        if (!negotiate_output_type()) return false;
+        return try_get_output_frame(out_frame);
     }
 
     if (FAILED(hr)) {
@@ -292,22 +215,16 @@ bool MFVideoDecoder::try_get_output_frame(
         return false;
     }
 
-    IMFSample* result = output_buffer.pSample;
-    if (!result) return false;
-
-    return extract_texture_from_sample(result, out_texture, out_srv);
+    if (!output_buffer.pSample) return false;
+    return extract_frame_from_sample(output_buffer.pSample, out_frame);
 }
 
-bool MFVideoDecoder::extract_texture_from_sample(
-    IMFSample* sample,
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv
-) {
+bool MFVideoDecoder::extract_frame_from_sample(IMFSample* sample, DecodedFrame& out_frame) {
     Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
     HRESULT hr = sample->ConvertToContiguousBuffer(buffer.GetAddressOf());
     if (FAILED(hr)) return false;
 
-    // Get dimensions from current output type
+    // Get dimensions
     Microsoft::WRL::ComPtr<IMFMediaType> output_type;
     hr = mft_->GetOutputCurrentType(0, output_type.GetAddressOf());
     if (FAILED(hr)) return false;
@@ -316,137 +233,54 @@ bool MFVideoDecoder::extract_texture_from_sample(
     hr = MFGetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE, &width, &height);
     if (FAILED(hr) || width == 0 || height == 0) return false;
 
-    // Get raw pixel data via IMFMediaBuffer::Lock().
-    // For NV12, Lock() returns CONTIGUOUS memory: Y plane followed by UV plane.
-    // We intentionally avoid IMF2DBuffer::Lock2D() for NV12 because Lock2D
-    // on multiplanar formats may only return the Y plane or use a different
-    // internal stride that doesn't match the contiguous NV12 layout.
+    // Lock NV12 buffer (contiguous Y + UV in CPU memory)
     BYTE* raw_data = nullptr;
     DWORD max_len = 0, cur_len = 0;
     hr = buffer->Lock(&raw_data, &max_len, &cur_len);
     if (FAILED(hr) || !raw_data) return false;
 
-    // Determine stride: for NV12, stride = width (1 byte per Y pixel).
-    // For BGRA, stride = width * 4.
     LONG stride = output_stride_;
-    if (stride <= 0) {
-        stride = static_cast<LONG>(width);
+    if (stride <= 0) stride = static_cast<LONG>(width);
+
+    // Log buffer details once
+    static bool buffer_logged = false;
+    if (!buffer_logged) {
+        buffer_logged = true;
+        Logger::info("Decode buffer: {}x{}, stride={}, buf_size={}", width, height, stride, cur_len);
     }
 
-    // Log stride once for diagnostics
-    static bool stride_logged = false;
-    if (!stride_logged) {
-        stride_logged = true;
-        Logger::info("Decode buffer: {}x{}, stride={}, buffer_size={}, format={}",
-                     width, height, stride, cur_len,
-                     (output_dxgi_format_ == DXGI_FORMAT_NV12) ? "NV12" : "BGRA");
+    // NV12 → BGRA conversion (BT.601 full-range — verified correct)
+    const UINT bgra_stride = width * 4;
+    out_frame.width = static_cast<int>(width);
+    out_frame.height = static_cast<int>(height);
+    out_frame.bgra.resize(static_cast<size_t>(bgra_stride) * height);
+
+    const BYTE* y_plane = raw_data;
+    const BYTE* uv_plane = raw_data + stride * height;
+
+    for (UINT row = 0; row < height; ++row) {
+        const BYTE* y_row = y_plane + row * stride;
+        const BYTE* uv_row = uv_plane + (row / 2) * stride;
+        uint8_t* bgra_row = out_frame.bgra.data() + row * bgra_stride;
+
+        for (UINT col = 0; col < width; ++col) {
+            const int y = y_row[col];
+            const int u = uv_row[(col & ~1u)] - 128;
+            const int v = uv_row[(col & ~1u) + 1] - 128;
+
+            // BT.601 full-range (verified to produce correct images)
+            int r = y + ((359 * v) >> 8);
+            int g = y - ((88 * u + 183 * v) >> 8);
+            int b = y + ((454 * u) >> 8);
+
+            bgra_row[col * 4 + 0] = static_cast<uint8_t>((b < 0) ? 0 : (b > 255) ? 255 : b);
+            bgra_row[col * 4 + 1] = static_cast<uint8_t>((g < 0) ? 0 : (g > 255) ? 255 : g);
+            bgra_row[col * 4 + 2] = static_cast<uint8_t>((r < 0) ? 0 : (r > 255) ? 255 : r);
+            bgra_row[col * 4 + 3] = 255;
+        }
     }
-
-    // Determine the MFT's actual output format (not our cached value,
-    // which must stay as NV12 to ensure this branch runs every frame).
-    GUID actual_subtype{};
-    output_type->GetGUID(MF_MT_SUBTYPE, &actual_subtype);
-    const bool is_nv12_output = (actual_subtype == MFVideoFormat_NV12);
-
-    // If the output is NV12, convert to BGRA in CPU.
-    // NV12 can't be used as a shader resource on D3D11 (multiplanar format).
-    // The conversion is fast enough for our resolution (1312x976 @ 30fps).
-    if (is_nv12_output) {
-        // Per-frame BGRA buffer. We intentionally do NOT reuse a persistent
-        // buffer because CreateTexture2D may defer the copy from pSysMem on
-        // some GPU drivers. By the time the GPU reads the data, the decode
-        // thread would have already overwritten the buffer for the next frame,
-        // causing severe visual corruption (smearing, vertical banding).
-        // The 2ms allocation cost is acceptable on the background decode thread.
-        const UINT bgra_stride = width * 4;
-        std::vector<uint8_t> bgra(static_cast<size_t>(bgra_stride) * height);
-
-        const BYTE* y_plane = raw_data;
-        const BYTE* uv_plane = raw_data + stride * height;
-
-        // BT.709 NV12 → BGRA conversion (correct for HD AirPlay content)
-        for (UINT row = 0; row < height; ++row) {
-            const BYTE* y_row = y_plane + row * stride;
-            const BYTE* uv_row = uv_plane + (row / 2) * stride;
-            uint8_t* bgra_row = bgra.data() + row * bgra_stride;
-
-            for (UINT col = 0; col < width; ++col) {
-                const int y_val = y_row[col];
-                const int u_val = uv_row[(col & ~1u)] - 128;
-                const int v_val = uv_row[(col & ~1u) + 1] - 128;
-
-                // BT.709 full-range conversion
-                int r = y_val + ((357 * v_val) >> 8);
-                int g = y_val - ((42 * u_val + 107 * v_val) >> 8);
-                int b = y_val + ((451 * u_val) >> 8);
-
-                bgra_row[col * 4 + 0] = static_cast<uint8_t>((b < 0) ? 0 : (b > 255) ? 255 : b);
-                bgra_row[col * 4 + 1] = static_cast<uint8_t>((g < 0) ? 0 : (g > 255) ? 255 : g);
-                bgra_row[col * 4 + 2] = static_cast<uint8_t>((r < 0) ? 0 : (r > 255) ? 255 : r);
-                bgra_row[col * 4 + 3] = 255;
-            }
-        }
-
-        buffer->Unlock();
-
-        // Create BGRA texture (CreateTexture2D is thread-safe on ID3D11Device)
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = width;
-        desc.Height = height;
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-        D3D11_SUBRESOURCE_DATA init_data{};
-        init_data.pSysMem = bgra.data();
-        init_data.SysMemPitch = bgra_stride;
-
-        hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
-        if (FAILED(hr)) {
-            Logger::error("CreateTexture2D (BGRA) failed: 0x{:08X}", hr);
-            return false;
-        }
-
-        // Pre-create SRV (thread-safe on ID3D11Device)
-        hr = device_->CreateShaderResourceView(
-            out_texture.Get(), nullptr, out_srv.GetAddressOf());
-        if (FAILED(hr)) {
-            Logger::error("CreateShaderResourceView failed: 0x{:08X}", hr);
-            out_texture.Reset();
-            return false;
-        }
-
-        return true;
-    }
-
-    // BGRA path: create texture directly from the buffer data
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = width;
-    desc.Height = height;
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = output_dxgi_format_;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-    D3D11_SUBRESOURCE_DATA init_data{};
-    init_data.pSysMem = raw_data;
-    init_data.SysMemPitch = static_cast<UINT>(stride);
-
-    hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
 
     buffer->Unlock();
-
-    if (FAILED(hr)) {
-        Logger::error("CreateTexture2D failed: 0x{:08X} ({}x{}, fmt={})",
-                      hr, width, height, static_cast<int>(output_dxgi_format_));
-        return false;
-    }
-
     return true;
 }
 
@@ -465,10 +299,7 @@ void MFVideoDecoder::shutdown() {
     }
 
     mft_.Reset();
-    device_.Reset();
     output_type_set_ = false;
-    output_mf_format_ = {};
-    output_dxgi_format_ = DXGI_FORMAT_UNKNOWN;
     output_stride_ = 0;
     first_frame_logged_ = false;
     initialized_ = false;

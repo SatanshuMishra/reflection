@@ -279,11 +279,10 @@ void App::on_ipad_connected() {
         return;
     }
 
-    // Initialize the H.264 decoder with the renderer's D3D11 device.
-    // ID3D11Device::CreateTexture2D is thread-safe (internal locking),
-    // so the decoder can be used from the background decode thread.
+    // Initialize the H.264 decoder (CPU-only, no D3D11 dependency).
+    // The decoder produces raw BGRA bytes; the main thread creates textures.
     decoder_ = std::make_unique<MFVideoDecoder>();
-    if (!decoder_->init(mirror_window_->renderer()->device())) {
+    if (!decoder_->init()) {
         Logger::error("Failed to initialize MFVideoDecoder");
         decoder_.reset();
     }
@@ -332,8 +331,8 @@ void App::on_mirror_window_closed() {
 
     {
         std::lock_guard lock(frame_mutex_);
-        latest_frame_.Reset();
-        latest_srv_.Reset();
+        latest_bgra_.clear();
+        latest_bgra_.shrink_to_fit();
         has_new_frame_ = false;
     }
 
@@ -359,8 +358,8 @@ void App::cleanup_mirror_session() {
 
     {
         std::lock_guard lock(frame_mutex_);
-        latest_frame_.Reset();
-        latest_srv_.Reset();
+        latest_bgra_.clear();
+        latest_bgra_.shrink_to_fit();
         has_new_frame_ = false;
     }
 
@@ -375,28 +374,28 @@ void App::on_render_timer() {
     static uint64_t frames_rendered = 0;
     ++timer_ticks;
 
-    // Grab the latest decoded frame + pre-created SRV from decode thread
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+    // Grab the latest decoded BGRA pixels from the decode thread.
+    // We std::move the vector to avoid holding the mutex during rendering.
+    std::vector<uint8_t> bgra;
     int width = 0, height = 0;
     bool has_frame = false;
 
     {
         std::lock_guard lock(frame_mutex_);
         if (has_new_frame_) {
-            texture = latest_frame_;
-            srv = latest_srv_;
-            width = latest_frame_width_;
-            height = latest_frame_height_;
+            bgra = std::move(latest_bgra_);  // O(1) move
+            width = latest_width_;
+            height = latest_height_;
             has_frame = true;
             has_new_frame_ = false;
         }
     }
 
-    if (has_frame && texture && srv) {
+    if (has_frame && !bgra.empty()) {
         ++frames_rendered;
+        const int bgra_stride = width * 4;
         mirror_window_->renderer()->render_video_frame(
-            texture.Get(), srv.Get(), width, height);
+            bgra.data(), bgra_stride, width, height);
 
         // Log periodically
         if (frames_rendered % 30 == 0) {
@@ -446,37 +445,32 @@ void App::decode_loop(std::stop_token stop_token) {
                           frames_fed, frame.data.size(), frame.timestamp);
         }
 
-        Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        DecodedFrame decoded_frame;
         const bool decoded = decoder_->decode(
             frame.data.data(),
             frame.data.size(),
             frame.timestamp,
-            texture, srv);
+            decoded_frame);
 
-        if (decoded && texture && srv) {
+        if (decoded && !decoded_frame.bgra.empty()) {
             ++frames_decoded;
-
-            D3D11_TEXTURE2D_DESC desc{};
-            texture->GetDesc(&desc);
 
             if (frames_decoded == 1) {
                 Logger::info("First decoded frame: {}x{} (after {} input frames)",
-                             desc.Width, desc.Height, frames_fed);
+                             decoded_frame.width, decoded_frame.height, frames_fed);
             }
 
             if (frames_decoded % 30 == 0) {
                 Logger::debug("Decode: produced frame #{} ({}x{})",
-                              frames_decoded, desc.Width, desc.Height);
+                              frames_decoded, decoded_frame.width, decoded_frame.height);
             }
 
-            // Store for the main thread's render timer
+            // Move raw BGRA bytes to shared state for main thread
             {
                 std::lock_guard lock(frame_mutex_);
-                latest_frame_ = std::move(texture);
-                latest_srv_ = std::move(srv);
-                latest_frame_width_ = static_cast<int>(desc.Width);
-                latest_frame_height_ = static_cast<int>(desc.Height);
+                latest_bgra_ = std::move(decoded_frame.bgra);  // O(1) move
+                latest_width_ = decoded_frame.width;
+                latest_height_ = decoded_frame.height;
                 has_new_frame_ = true;
             }
         }
