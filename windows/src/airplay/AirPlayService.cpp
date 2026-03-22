@@ -103,11 +103,11 @@ void AirPlayService::set_audio_frame_callback(AudioFrameCallback callback) {
 }
 
 void AirPlayService::wire_callbacks_to_core() {
-    // Video: adapt from AirPlayVideoFrame to our (data, size, timestamp) callback
+    // Video: adapt from AirPlayVideoFrame to our (data, size, timestamp, frame_type) callback
     if (video_frame_cb_) {
         core_->set_video_callback(
             [cb = video_frame_cb_](const AirPlayVideoFrame& frame) {
-                cb(frame.data, frame.size, frame.timestamp);
+                cb(frame.data, frame.size, frame.timestamp, frame.nal_type);
             });
     }
 
