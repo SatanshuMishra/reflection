@@ -342,10 +342,16 @@ bool MFVideoDecoder::extract_texture_from_sample(
                      (output_dxgi_format_ == DXGI_FORMAT_NV12) ? "NV12" : "BGRA");
     }
 
+    // Determine the MFT's actual output format (not our cached value,
+    // which must stay as NV12 to ensure this branch runs every frame).
+    GUID actual_subtype{};
+    output_type->GetGUID(MF_MT_SUBTYPE, &actual_subtype);
+    const bool is_nv12_output = (actual_subtype == MFVideoFormat_NV12);
+
     // If the output is NV12, convert to BGRA in CPU.
     // NV12 can't be used as a shader resource on D3D11 (multiplanar format).
     // The conversion is fast enough for our resolution (1312x976 @ 30fps).
-    if (output_dxgi_format_ == DXGI_FORMAT_NV12) {
+    if (is_nv12_output) {
         // Allocate BGRA buffer
         const UINT bgra_stride = width * 4;
         std::vector<uint8_t> bgra(bgra_stride * height);
@@ -401,8 +407,6 @@ bool MFVideoDecoder::extract_texture_from_sample(
             return false;
         }
 
-        // Update format so renderer knows this is BGRA
-        output_dxgi_format_ = DXGI_FORMAT_B8G8R8A8_UNORM;
         return true;
     }
 
