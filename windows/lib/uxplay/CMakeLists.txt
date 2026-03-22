@@ -137,10 +137,15 @@ if(PLIST_INCLUDE_DIR)
     target_include_directories(uxplay_core PRIVATE ${PLIST_INCLUDE_DIR})
 endif()
 
+# pthreads — UxPlay uses pthreads exclusively (no Windows threads path).
+# On MSYS2/MinGW, winpthreads provides POSIX pthreads compatibility.
+find_package(Threads REQUIRED)
+
 target_link_libraries(uxplay_core
     PRIVATE
         OpenSSL::SSL
         OpenSSL::Crypto
+        Threads::Threads
         ws2_32
         winmm       # timeGetTime()
 )
@@ -148,6 +153,31 @@ target_link_libraries(uxplay_core
 # Link libplist (found by root CMakeLists.txt)
 if(PLIST_LIBRARY)
     target_link_libraries(uxplay_core PRIVATE ${PLIST_LIBRARY})
+endif()
+
+# Detect libplist version for API compatibility.
+# libplist 2.1.0+ changed plist_get_data_val() signature.
+# UxPlay uses #ifdef PLIST_210 to handle this.
+if(PkgConfig_FOUND)
+    pkg_check_modules(PLIST_VER QUIET libplist-2.0>=2.1.0)
+    if(PLIST_VER_FOUND)
+        message(STATUS "libplist >= 2.1.0 detected — defining PLIST_210")
+        set(PLIST_210_DEF "PLIST_210")
+    else()
+        set(PLIST_210_DEF "")
+    endif()
+    # Also check for >= 2.3.0 (further API changes)
+    pkg_check_modules(PLIST_230 QUIET libplist-2.0>=2.3.0)
+    if(PLIST_230_FOUND)
+        message(STATUS "libplist >= 2.3.0 detected — defining PLIST_230")
+        set(PLIST_230_DEF "PLIST_230")
+    else()
+        set(PLIST_230_DEF "")
+    endif()
+else()
+    # Assume modern libplist if pkg-config unavailable
+    set(PLIST_210_DEF "PLIST_210")
+    set(PLIST_230_DEF "")
 endif()
 
 # Compile definitions
@@ -159,6 +189,8 @@ target_compile_definitions(uxplay_core PRIVATE
     _WINSOCK_DEPRECATED_NO_WARNINGS
     # UxPlay-specific defines
     STANDALONE
+    ${PLIST_210_DEF}
+    ${PLIST_230_DEF}
 )
 
 if(MSVC)
