@@ -352,25 +352,23 @@ bool MFVideoDecoder::extract_texture_from_sample(
     // NV12 can't be used as a shader resource on D3D11 (multiplanar format).
     // The conversion is fast enough for our resolution (1312x976 @ 30fps).
     if (is_nv12_output) {
-        // Reuse persistent BGRA buffer — avoids 5.1MB heap alloc per frame
+        // Per-frame BGRA buffer. We intentionally do NOT reuse a persistent
+        // buffer because CreateTexture2D may defer the copy from pSysMem on
+        // some GPU drivers. By the time the GPU reads the data, the decode
+        // thread would have already overwritten the buffer for the next frame,
+        // causing severe visual corruption (smearing, vertical banding).
+        // The 2ms allocation cost is acceptable on the background decode thread.
         const UINT bgra_stride = width * 4;
-        const size_t bgra_size = static_cast<size_t>(bgra_stride) * height;
-        if (bgra_buffer_.size() != bgra_size) {
-            bgra_buffer_.resize(bgra_size);
-            Logger::info("BGRA buffer allocated: {} bytes ({}x{})",
-                         bgra_size, width, height);
-        }
+        std::vector<uint8_t> bgra(static_cast<size_t>(bgra_stride) * height);
 
         const BYTE* y_plane = raw_data;
         const BYTE* uv_plane = raw_data + stride * height;
 
-        // BT.709 NV12 → BGRA conversion (correct for HD AirPlay content).
-        // BT.709 coefficients differ from BT.601 primarily in green channel —
-        // using BT.601 on BT.709 content produces a green tint.
+        // BT.709 NV12 → BGRA conversion (correct for HD AirPlay content)
         for (UINT row = 0; row < height; ++row) {
             const BYTE* y_row = y_plane + row * stride;
             const BYTE* uv_row = uv_plane + (row / 2) * stride;
-            uint8_t* bgra_row = bgra_buffer_.data() + row * bgra_stride;
+            uint8_t* bgra_row = bgra.data() + row * bgra_stride;
 
             for (UINT col = 0; col < width; ++col) {
                 const int y_val = y_row[col];
@@ -403,7 +401,7 @@ bool MFVideoDecoder::extract_texture_from_sample(
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
         D3D11_SUBRESOURCE_DATA init_data{};
-        init_data.pSysMem = bgra_buffer_.data();
+        init_data.pSysMem = bgra.data();
         init_data.SysMemPitch = bgra_stride;
 
         hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
