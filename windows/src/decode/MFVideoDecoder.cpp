@@ -7,6 +7,8 @@
 #include <mfobjects.h>
 #include <mftransform.h>
 
+#include <vector>
+
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "mf.lib")
@@ -305,40 +307,40 @@ bool MFVideoDecoder::extract_texture_from_sample(
     HRESULT hr = sample->ConvertToContiguousBuffer(buffer.GetAddressOf());
     if (FAILED(hr)) return false;
 
-    // Try DXGI buffer (hardware-decoded texture)
-    Microsoft::WRL::ComPtr<IMFDXGIBuffer> dxgi_buffer;
-    hr = buffer.As(&dxgi_buffer);
-    if (SUCCEEDED(hr)) {
-        hr = dxgi_buffer->GetResource(IID_PPV_ARGS(out_texture.GetAddressOf()));
-        if (SUCCEEDED(hr)) return true;
-    }
-
-    // Software path: create a standard texture from CPU memory
-    BYTE* raw_data = nullptr;
-    DWORD max_length = 0, current_length = 0;
-    hr = buffer->Lock(&raw_data, &max_length, &current_length);
-    if (FAILED(hr) || !raw_data) return false;
-
     // Get dimensions from current output type
     Microsoft::WRL::ComPtr<IMFMediaType> output_type;
     hr = mft_->GetOutputCurrentType(0, output_type.GetAddressOf());
-    if (FAILED(hr)) { buffer->Unlock(); return false; }
+    if (FAILED(hr)) return false;
 
     UINT32 width = 0, height = 0;
     hr = MFGetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE, &width, &height);
-    if (FAILED(hr) || width == 0 || height == 0) { buffer->Unlock(); return false; }
+    if (FAILED(hr) || width == 0 || height == 0) return false;
 
-    // Determine stride from IMF2DBuffer or default
+    // Get raw pixel data from the MF buffer.
+    // For IMFMediaBuffer::Lock(), NV12 data is CONTIGUOUS in memory:
+    //   Y plane: stride * height bytes
+    //   UV plane: stride * (height/2) bytes
+    // This is different from D3D11 NV12 textures which use separate subresources.
+    BYTE* raw_data = nullptr;
     LONG stride = output_stride_;
+
+    // Prefer IMF2DBuffer for correct stride
     Microsoft::WRL::ComPtr<IMF2DBuffer> buffer_2d;
+    bool locked_2d = false;
     if (SUCCEEDED(buffer.As(&buffer_2d))) {
         BYTE* scanline = nullptr;
         LONG pitch = 0;
         if (SUCCEEDED(buffer_2d->Lock2D(&scanline, &pitch))) {
+            raw_data = scanline;
             stride = (pitch < 0) ? -pitch : pitch;
-            raw_data = scanline;  // Use Lock2D pointer for correct layout
-            // Don't Unlock the original buffer — use Lock2D data
+            locked_2d = true;
         }
+    }
+
+    if (!locked_2d) {
+        DWORD max_len = 0, cur_len = 0;
+        hr = buffer->Lock(&raw_data, &max_len, &cur_len);
+        if (FAILED(hr) || !raw_data) return false;
     }
 
     if (stride <= 0) {
@@ -347,7 +349,72 @@ bool MFVideoDecoder::extract_texture_from_sample(
             : static_cast<LONG>(width);
     }
 
-    // Create texture with the decoded BGRA data
+    // If the output is NV12, convert to BGRA in CPU.
+    // NV12 can't be used as a shader resource on D3D11 (multiplanar format).
+    // The conversion is fast enough for our resolution (1312x976 @ 30fps).
+    if (output_dxgi_format_ == DXGI_FORMAT_NV12) {
+        // Allocate BGRA buffer
+        const UINT bgra_stride = width * 4;
+        std::vector<uint8_t> bgra(bgra_stride * height);
+
+        const BYTE* y_plane = raw_data;
+        const BYTE* uv_plane = raw_data + stride * height;
+
+        // BT.601 NV12 → BGRA conversion
+        for (UINT row = 0; row < height; ++row) {
+            const BYTE* y_row = y_plane + row * stride;
+            const BYTE* uv_row = uv_plane + (row / 2) * stride;
+            uint8_t* bgra_row = bgra.data() + row * bgra_stride;
+
+            for (UINT col = 0; col < width; ++col) {
+                const int y_val = y_row[col];
+                const int u_val = uv_row[(col & ~1u)] - 128;      // Even byte = U
+                const int v_val = uv_row[(col & ~1u) + 1] - 128;  // Odd byte = V
+
+                // BT.601 limited range → full range
+                int r = y_val + ((359 * v_val) >> 8);
+                int g = y_val - ((88 * u_val + 183 * v_val) >> 8);
+                int b = y_val + ((454 * u_val) >> 8);
+
+                // Clamp to [0, 255]
+                bgra_row[col * 4 + 0] = static_cast<uint8_t>((b < 0) ? 0 : (b > 255) ? 255 : b);
+                bgra_row[col * 4 + 1] = static_cast<uint8_t>((g < 0) ? 0 : (g > 255) ? 255 : g);
+                bgra_row[col * 4 + 2] = static_cast<uint8_t>((r < 0) ? 0 : (r > 255) ? 255 : r);
+                bgra_row[col * 4 + 3] = 255;  // Alpha
+            }
+        }
+
+        // Unlock source buffer
+        if (locked_2d) buffer_2d->Unlock2D();
+        else buffer->Unlock();
+
+        // Create BGRA texture
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+        D3D11_SUBRESOURCE_DATA init_data{};
+        init_data.pSysMem = bgra.data();
+        init_data.SysMemPitch = bgra_stride;
+
+        hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
+        if (FAILED(hr)) {
+            Logger::error("CreateTexture2D (BGRA from NV12) failed: 0x{:08X}", hr);
+            return false;
+        }
+
+        // Update format so renderer knows this is BGRA
+        output_dxgi_format_ = DXGI_FORMAT_B8G8R8A8_UNORM;
+        return true;
+    }
+
+    // BGRA path: create texture directly from the buffer data
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
     desc.Height = height;
@@ -358,27 +425,14 @@ bool MFVideoDecoder::extract_texture_from_sample(
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-    // For BGRA with negative stride (bottom-up), flip the pointer
-    const BYTE* src_data = raw_data;
-    LONG src_pitch = stride;
-    if (stride < 0) {
-        // Bottom-up DIB — start from last row, negative pitch
-        src_data = raw_data + (-stride) * (height - 1);
-        src_pitch = stride;  // Negative pitch for bottom-up
-    }
-
     D3D11_SUBRESOURCE_DATA init_data{};
-    init_data.pSysMem = src_data;
-    init_data.SysMemPitch = static_cast<UINT>((src_pitch < 0) ? -src_pitch : src_pitch);
+    init_data.pSysMem = raw_data;
+    init_data.SysMemPitch = static_cast<UINT>(stride);
 
     hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
 
-    // Unlock whichever buffer we locked
-    if (buffer_2d) {
-        buffer_2d->Unlock2D();
-    } else {
-        buffer->Unlock();
-    }
+    if (locked_2d) buffer_2d->Unlock2D();
+    else buffer->Unlock();
 
     if (FAILED(hr)) {
         Logger::error("CreateTexture2D failed: 0x{:08X} ({}x{}, fmt={})",
