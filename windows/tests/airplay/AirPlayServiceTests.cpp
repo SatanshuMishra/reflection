@@ -210,7 +210,7 @@ TEST_F(AirPlayServiceTest, VideoCallbackWiredToCore) {
 TEST_F(AirPlayServiceTest, AudioCallbackWiredToCore) {
     bool called = false;
     service_->set_audio_frame_callback(
-        [&](const uint8_t*, size_t, uint64_t, uint8_t) { called = true; });
+        [&](const uint8_t*, size_t, uint64_t) { called = true; });
 
     service_->start(default_config());
 
