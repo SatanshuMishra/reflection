@@ -333,6 +333,7 @@ void App::on_mirror_window_closed() {
     {
         std::lock_guard lock(frame_mutex_);
         latest_frame_.Reset();
+        latest_srv_.Reset();
         has_new_frame_ = false;
     }
 
@@ -348,7 +349,6 @@ void App::cleanup_mirror_session() {
         KillTimer(message_hwnd_, constants::kRenderTimerId);
     }
 
-    // Stop decode thread FIRST
     if (decode_thread_.joinable()) {
         decode_thread_.request_stop();
         decode_thread_.join();
@@ -360,6 +360,7 @@ void App::cleanup_mirror_session() {
     {
         std::lock_guard lock(frame_mutex_);
         latest_frame_.Reset();
+        latest_srv_.Reset();
         has_new_frame_ = false;
     }
 
@@ -374,8 +375,9 @@ void App::on_render_timer() {
     static uint64_t frames_rendered = 0;
     ++timer_ticks;
 
-    // Grab the latest decoded frame from the decode thread
+    // Grab the latest decoded frame + pre-created SRV from decode thread
     Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
     int width = 0, height = 0;
     bool has_frame = false;
 
@@ -383,6 +385,7 @@ void App::on_render_timer() {
         std::lock_guard lock(frame_mutex_);
         if (has_new_frame_) {
             texture = latest_frame_;
+            srv = latest_srv_;
             width = latest_frame_width_;
             height = latest_frame_height_;
             has_frame = true;
@@ -390,10 +393,10 @@ void App::on_render_timer() {
         }
     }
 
-    if (has_frame && texture) {
+    if (has_frame && texture && srv) {
         ++frames_rendered;
         mirror_window_->renderer()->render_video_frame(
-            texture.Get(), width, height);
+            texture.Get(), srv.Get(), width, height);
 
         // Log periodically
         if (frames_rendered % 30 == 0) {
@@ -444,13 +447,14 @@ void App::decode_loop(std::stop_token stop_token) {
         }
 
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
         const bool decoded = decoder_->decode(
             frame.data.data(),
             frame.data.size(),
             frame.timestamp,
-            texture);
+            texture, srv);
 
-        if (decoded && texture) {
+        if (decoded && texture && srv) {
             ++frames_decoded;
 
             D3D11_TEXTURE2D_DESC desc{};
@@ -461,7 +465,6 @@ void App::decode_loop(std::stop_token stop_token) {
                              desc.Width, desc.Height, frames_fed);
             }
 
-            // Log decoded frames periodically
             if (frames_decoded % 30 == 0) {
                 Logger::debug("Decode: produced frame #{} ({}x{})",
                               frames_decoded, desc.Width, desc.Height);
@@ -471,6 +474,7 @@ void App::decode_loop(std::stop_token stop_token) {
             {
                 std::lock_guard lock(frame_mutex_);
                 latest_frame_ = std::move(texture);
+                latest_srv_ = std::move(srv);
                 latest_frame_width_ = static_cast<int>(desc.Width);
                 latest_frame_height_ = static_cast<int>(desc.Height);
                 has_new_frame_ = true;

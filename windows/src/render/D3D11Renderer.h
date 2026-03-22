@@ -30,8 +30,9 @@ public:
     /// Render a blank frame (background color only).
     void render_frame();
 
-    /// Render a decoded BGRA video frame.
+    /// Render a decoded BGRA video frame with a pre-created SRV.
     void render_video_frame(ID3D11Texture2D* texture,
+                            ID3D11ShaderResourceView* srv,
                             int video_width, int video_height);
 
     void shutdown();
@@ -56,15 +57,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D11PixelShader> video_ps_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
 
-    // Staging texture for frames that lack BIND_SHADER_RESOURCE
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging_;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> staging_srv_;
-    int staging_width_ = 0;
-    int staging_height_ = 0;
-
     [[nodiscard]] bool create_render_target();
     [[nodiscard]] bool init_video_pipeline();
-    [[nodiscard]] bool ensure_staging(int width, int height, DXGI_FORMAT format);
     void set_letterbox_viewport(int video_width, int video_height);
 };
 
