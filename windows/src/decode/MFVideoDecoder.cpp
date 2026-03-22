@@ -6,7 +6,6 @@
 #include <mfidl.h>
 #include <mfobjects.h>
 #include <mftransform.h>
-#include <codecapi.h>
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -14,11 +13,25 @@
 
 namespace reflection {
 
-MFVideoDecoder::MFVideoDecoder() = default;
+namespace {
 
-MFVideoDecoder::~MFVideoDecoder() {
-    shutdown();
-}
+/// Map MFVideoFormat GUID to DXGI_FORMAT and human-readable name.
+struct FormatMapping {
+    GUID mf_format;
+    DXGI_FORMAT dxgi_format;
+    const char* name;
+};
+
+const FormatMapping kPreferredFormats[] = {
+    { MFVideoFormat_RGB32,  DXGI_FORMAT_B8G8R8A8_UNORM, "RGB32 (BGRA)" },
+    { MFVideoFormat_ARGB32, DXGI_FORMAT_B8G8R8A8_UNORM, "ARGB32 (BGRA)" },
+    { MFVideoFormat_NV12,   DXGI_FORMAT_NV12,           "NV12" },
+};
+
+} // namespace
+
+MFVideoDecoder::MFVideoDecoder() = default;
+MFVideoDecoder::~MFVideoDecoder() { shutdown(); }
 
 bool MFVideoDecoder::init(ID3D11Device* device) {
     if (initialized_) return true;
@@ -28,10 +41,9 @@ bool MFVideoDecoder::init(ID3D11Device* device) {
     }
 
     Logger::info("Initializing Media Foundation H.264 decoder");
-
     device_ = device;
 
-    // Step 1: Create DXGI device manager for DXVA2 hardware acceleration
+    // DXGI device manager for DXVA2 hardware acceleration
     HRESULT hr = MFCreateDXGIDeviceManager(
         &device_manager_token_, device_manager_.GetAddressOf());
     if (FAILED(hr)) {
@@ -39,57 +51,40 @@ bool MFVideoDecoder::init(ID3D11Device* device) {
         return false;
     }
 
-    // Step 2: Associate our D3D11 device with the manager
     hr = device_manager_->ResetDevice(device_.Get(), device_manager_token_);
     if (FAILED(hr)) {
-        Logger::error("IMFDXGIDeviceManager::ResetDevice failed: 0x{:08X}", hr);
+        Logger::error("ResetDevice failed: 0x{:08X}", hr);
         return false;
     }
 
-    // Step 3: Find and create the H.264 decoder MFT
-    if (!create_decoder_mft()) {
-        return false;
-    }
+    if (!create_decoder_mft()) return false;
 
-    // Step 4: Enable DXVA2 on the MFT
+    // Enable DXVA2 (non-fatal if it fails — software decode works)
     hr = mft_->ProcessMessage(
         MFT_MESSAGE_SET_D3D_MANAGER,
         reinterpret_cast<ULONG_PTR>(device_manager_.Get()));
     if (FAILED(hr)) {
-        Logger::warn("Failed to set D3D manager on MFT: 0x{:08X} — "
-                     "falling back to software decode", hr);
-        // Continue without DXVA2 — software decode still works
+        Logger::warn("DXVA2 not available (0x{:08X}), using software decode", hr);
     }
 
-    // Step 5: Set input type (H.264)
-    if (!set_input_type()) {
-        return false;
-    }
+    if (!set_input_type()) return false;
 
-    // Step 6: Try to negotiate output type (NV12).
-    // Some MFTs don't know their output capabilities until they've received
-    // SPS/PPS data. If negotiation fails now, it will be retried when the
-    // MFT signals MF_E_TRANSFORM_STREAM_CHANGE during decode.
+    // Output type negotiation — may be deferred if MFT needs SPS/PPS first
     if (!negotiate_output_type()) {
         Logger::warn("Output type negotiation deferred — will retry after SPS/PPS");
-        // Non-fatal: continue initialization
     }
 
-    // Step 7: Signal the MFT to begin streaming
     hr = mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     if (FAILED(hr)) {
-        Logger::error("MFT_MESSAGE_NOTIFY_BEGIN_STREAMING failed: 0x{:08X}", hr);
+        Logger::error("BEGIN_STREAMING failed: 0x{:08X}", hr);
         return false;
     }
 
-    hr = mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-    if (FAILED(hr)) {
-        Logger::warn("MFT_MESSAGE_NOTIFY_START_OF_STREAM failed: 0x{:08X}", hr);
-        // Non-fatal — some MFTs don't require this
-    }
+    mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
     initialized_ = true;
-    Logger::info("Media Foundation H.264 decoder initialized (DXVA2)");
+    Logger::info("Media Foundation decoder initialized (output: {})",
+                 output_type_set_ ? "configured" : "pending");
     return true;
 }
 
@@ -98,161 +93,97 @@ bool MFVideoDecoder::create_decoder_mft() {
     input_type.guidMajorType = MFMediaType_Video;
     input_type.guidSubtype = MFVideoFormat_H264;
 
-    // Try multiple enum strategies — different Windows versions and GPU drivers
-    // register decoders under different flags.
-    struct EnumAttempt {
-        UINT32 flags;
-        const char* description;
-    };
-
+    struct EnumAttempt { UINT32 flags; const char* desc; };
     const EnumAttempt attempts[] = {
-        { MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
-          "hardware (sorted)" },
-        { MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
-          "sync+async (sorted)" },
-        { MFT_ENUM_FLAG_ALL | MFT_ENUM_FLAG_SORTANDFILTER,
-          "all (sorted)" },
-        { MFT_ENUM_FLAG_ALL,
-          "all (unsorted)" },
+        { MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, "hardware" },
+        { MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER, "sync+async" },
+        { MFT_ENUM_FLAG_ALL | MFT_ENUM_FLAG_SORTANDFILTER, "all (sorted)" },
+        { MFT_ENUM_FLAG_ALL, "all" },
     };
 
     for (const auto& attempt : attempts) {
         IMFActivate** activates = nullptr;
         UINT32 count = 0;
 
-        HRESULT hr = MFTEnumEx(
-            MFT_CATEGORY_VIDEO_DECODER,
-            attempt.flags,
-            &input_type,
-            nullptr,
-            &activates,
-            &count);
+        HRESULT hr = MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER, attempt.flags,
+                               &input_type, nullptr, &activates, &count);
 
         if (SUCCEEDED(hr) && count > 0) {
-            Logger::info("Found {} H.264 decoder(s) via: {}", count, attempt.description);
-
             hr = activates[0]->ActivateObject(IID_PPV_ARGS(mft_.GetAddressOf()));
-
-            for (UINT32 i = 0; i < count; ++i) {
-                activates[i]->Release();
-            }
+            for (UINT32 i = 0; i < count; ++i) activates[i]->Release();
             CoTaskMemFree(activates);
 
             if (SUCCEEDED(hr)) {
-                Logger::info("H.264 decoder MFT created via: {}", attempt.description);
+                Logger::info("H.264 decoder MFT created via: {}", attempt.desc);
                 return true;
             }
-
-            Logger::warn("Failed to activate decoder from '{}': 0x{:08X}",
-                         attempt.description, hr);
-        } else {
-            Logger::debug("No decoders found via: {} (hr=0x{:08X}, count={})",
-                          attempt.description, hr, count);
-
-            if (activates) {
-                for (UINT32 i = 0; i < count; ++i) {
-                    activates[i]->Release();
-                }
-                CoTaskMemFree(activates);
-            }
+        } else if (activates) {
+            for (UINT32 i = 0; i < count; ++i) activates[i]->Release();
+            CoTaskMemFree(activates);
         }
     }
 
-    Logger::error("No H.264 decoder MFT available on this system");
+    Logger::error("No H.264 decoder MFT available");
     return false;
 }
 
 bool MFVideoDecoder::set_input_type() {
-    Microsoft::WRL::ComPtr<IMFMediaType> input_type;
-    HRESULT hr = MFCreateMediaType(input_type.GetAddressOf());
+    Microsoft::WRL::ComPtr<IMFMediaType> type;
+    HRESULT hr = MFCreateMediaType(type.GetAddressOf());
     if (FAILED(hr)) return false;
 
-    hr = input_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    if (FAILED(hr)) return false;
+    type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
 
-    hr = input_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
-    if (FAILED(hr)) return false;
-
-    hr = mft_->SetInputType(0, input_type.Get(), 0);
+    hr = mft_->SetInputType(0, type.Get(), 0);
     if (FAILED(hr)) {
         Logger::error("SetInputType(H.264) failed: 0x{:08X}", hr);
         return false;
     }
-
-    Logger::debug("MFT input type set: H.264");
     return true;
 }
 
 bool MFVideoDecoder::negotiate_output_type() {
-    // Enumerate available output types and pick NV12
-    for (DWORD i = 0; ; ++i) {
-        Microsoft::WRL::ComPtr<IMFMediaType> output_type;
-        HRESULT hr = mft_->GetOutputAvailableType(0, i, output_type.GetAddressOf());
+    // Enumerate available output types and pick the best one.
+    // Priority: RGB32 > ARGB32 > NV12
+    // RGB32/ARGB32 produce single-plane BGRA textures, avoiding all NV12
+    // multiplanar format handling issues.
 
-        if (hr == MF_E_NO_MORE_TYPES) {
-            break;
-        }
-        if (FAILED(hr)) {
-            Logger::error("GetOutputAvailableType({}) failed: 0x{:08X}", i, hr);
-            break;
-        }
+    for (const auto& preferred : kPreferredFormats) {
+        for (DWORD i = 0; ; ++i) {
+            Microsoft::WRL::ComPtr<IMFMediaType> output_type;
+            HRESULT hr = mft_->GetOutputAvailableType(0, i, output_type.GetAddressOf());
+            if (hr == MF_E_NO_MORE_TYPES) break;
+            if (FAILED(hr)) break;
 
-        GUID subtype{};
-        hr = output_type->GetGUID(MF_MT_SUBTYPE, &subtype);
-        if (FAILED(hr)) continue;
-
-        // Prefer NV12 — it's the native DXVA2 output format
-        if (subtype == MFVideoFormat_NV12) {
-            hr = mft_->SetOutputType(0, output_type.Get(), 0);
-            if (SUCCEEDED(hr)) {
-                Logger::debug("MFT output type set: NV12");
-                output_type_set_ = true;
-
-                // Read output stride for software fallback path
-                UINT32 w = 0, h = 0;
-                if (SUCCEEDED(MFGetAttributeSize(
-                        output_type.Get(), MF_MT_FRAME_SIZE, &w, &h))) {
-                    UINT32 stride_val = 0;
-                    if (SUCCEEDED(output_type->GetUINT32(
-                            MF_MT_DEFAULT_STRIDE, &stride_val)) && stride_val != 0) {
-                        output_stride_ = static_cast<LONG>(stride_val);
-                    } else {
-                        output_stride_ = static_cast<LONG>(w);
-                    }
-                    Logger::debug("MFT output: {}x{}, stride={}", w, h, output_stride_);
-                }
-
-                return true;
-            }
-        }
-    }
-
-    // If NV12 not available, try the first available type
-    Microsoft::WRL::ComPtr<IMFMediaType> fallback;
-    HRESULT hr = mft_->GetOutputAvailableType(0, 0, fallback.GetAddressOf());
-    if (SUCCEEDED(hr)) {
-        hr = mft_->SetOutputType(0, fallback.Get(), 0);
-        if (SUCCEEDED(hr)) {
             GUID subtype{};
-            fallback->GetGUID(MF_MT_SUBTYPE, &subtype);
-            Logger::warn("Using non-NV12 output type (subtype GUID ends: ...{:08X})",
-                         subtype.Data1);
-            output_type_set_ = true;
+            if (FAILED(output_type->GetGUID(MF_MT_SUBTYPE, &subtype))) continue;
 
-            // Read stride for fallback type too
-            UINT32 w = 0, h = 0;
-            if (SUCCEEDED(MFGetAttributeSize(
-                    fallback.Get(), MF_MT_FRAME_SIZE, &w, &h))) {
-                UINT32 stride_val = 0;
-                if (SUCCEEDED(fallback->GetUINT32(
-                        MF_MT_DEFAULT_STRIDE, &stride_val)) && stride_val != 0) {
-                    output_stride_ = static_cast<LONG>(stride_val);
-                } else {
-                    output_stride_ = static_cast<LONG>(w);
+            if (subtype == preferred.mf_format) {
+                hr = mft_->SetOutputType(0, output_type.Get(), 0);
+                if (SUCCEEDED(hr)) {
+                    output_mf_format_ = preferred.mf_format;
+                    output_dxgi_format_ = preferred.dxgi_format;
+                    output_type_set_ = true;
+
+                    // Read stride
+                    UINT32 w = 0, h = 0;
+                    if (SUCCEEDED(MFGetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE, &w, &h))) {
+                        UINT32 stride_val = 0;
+                        if (SUCCEEDED(output_type->GetUINT32(MF_MT_DEFAULT_STRIDE, &stride_val))) {
+                            output_stride_ = static_cast<LONG>(stride_val);
+                        } else {
+                            // RGB32 stride = width * 4 bytes per pixel
+                            output_stride_ = (preferred.dxgi_format == DXGI_FORMAT_B8G8R8A8_UNORM)
+                                ? static_cast<LONG>(w * 4)
+                                : static_cast<LONG>(w);
+                        }
+                        Logger::info("MFT output: {} {}x{}, stride={}",
+                                     preferred.name, w, h, output_stride_);
+                    }
+                    return true;
                 }
             }
-
-            return true;
         }
     }
 
@@ -267,73 +198,49 @@ bool MFVideoDecoder::decode(
     if (!initialized_ || !mft_) return false;
     if (!data || size == 0) return false;
 
-    // Diagnostic: log first frame details to confirm Annex B format
+    // Log first frame for diagnostics
     if (!first_frame_logged_) {
         first_frame_logged_ = true;
         if (size >= 5) {
             Logger::info("First H.264 frame: size={}, bytes=[{:02X} {:02X} {:02X} {:02X} {:02X}]",
                          size, data[0], data[1], data[2], data[3], data[4]);
-        } else {
-            Logger::info("First H.264 frame: size={}", size);
         }
     }
 
-    // Step 1: Create IMFMediaBuffer with a copy of the NAL data
+    // Create MF sample from NAL data
     Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
-    HRESULT hr = MFCreateMemoryBuffer(
-        static_cast<DWORD>(size), buffer.GetAddressOf());
-    if (FAILED(hr)) {
-        Logger::error("MFCreateMemoryBuffer failed: 0x{:08X}", hr);
-        return false;
-    }
+    HRESULT hr = MFCreateMemoryBuffer(static_cast<DWORD>(size), buffer.GetAddressOf());
+    if (FAILED(hr)) return false;
 
     BYTE* buf_ptr = nullptr;
     hr = buffer->Lock(&buf_ptr, nullptr, nullptr);
     if (FAILED(hr)) return false;
-
     memcpy(buf_ptr, data, size);
     buffer->Unlock();
     buffer->SetCurrentLength(static_cast<DWORD>(size));
 
-    // Step 2: Create IMFSample and attach the buffer
     Microsoft::WRL::ComPtr<IMFSample> sample;
     hr = MFCreateSample(sample.GetAddressOf());
     if (FAILED(hr)) return false;
-
-    hr = sample->AddBuffer(buffer.Get());
-    if (FAILED(hr)) return false;
-
-    // Set the presentation timestamp (100-nanosecond units for MF)
-    // RPiPlay provides microsecond timestamps
+    sample->AddBuffer(buffer.Get());
     sample->SetSampleTime(static_cast<LONGLONG>(timestamp) * 10);
 
-    // Step 3: Feed the sample to the decoder
+    // Feed to decoder
     hr = mft_->ProcessInput(0, sample.Get(), 0);
 
     if (hr == MF_E_NOTACCEPTING) {
-        // MFT buffer is full — drain output first, then retry
-        if (try_get_output_frame(out_texture)) {
-            // Got a frame while draining. Try feeding input again next time.
-            return true;
-        }
-        // Still not accepting — decoder is backed up
+        if (try_get_output_frame(out_texture)) return true;
         return false;
     }
 
     if (FAILED(hr)) {
-        // Log at ERROR level — this often indicates missing SPS/PPS or wrong format
         if (size >= 4) {
-            Logger::error("ProcessInput failed: 0x{:08X}, size={}, "
-                          "first_bytes=[{:02X} {:02X} {:02X} {:02X}]",
-                          hr, size,
-                          data[0], data[1], data[2], data[3]);
-        } else {
-            Logger::error("ProcessInput failed: 0x{:08X}, size={}", hr, size);
+            Logger::error("ProcessInput failed: 0x{:08X}, size={}, bytes=[{:02X} {:02X} {:02X} {:02X}]",
+                          hr, size, data[0], data[1], data[2], data[3]);
         }
         return false;
     }
 
-    // Step 4: Try to get a decoded frame
     return try_get_output_frame(out_texture);
 }
 
@@ -342,52 +249,40 @@ bool MFVideoDecoder::try_get_output_frame(
 ) {
     MFT_OUTPUT_DATA_BUFFER output_buffer{};
     output_buffer.dwStreamID = 0;
-    output_buffer.pSample = nullptr;
-    output_buffer.dwStatus = 0;
-    output_buffer.pEvents = nullptr;
 
-    // Check if MFT allocates its own output samples (DXVA2 decoders do)
     MFT_OUTPUT_STREAM_INFO stream_info{};
     HRESULT hr = mft_->GetOutputStreamInfo(0, &stream_info);
     if (FAILED(hr)) return false;
 
     Microsoft::WRL::ComPtr<IMFSample> output_sample;
     if (!(stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES)) {
-        // MFT doesn't provide samples — we must allocate one
         hr = MFCreateSample(output_sample.GetAddressOf());
         if (FAILED(hr)) return false;
 
         Microsoft::WRL::ComPtr<IMFMediaBuffer> out_buf;
-        hr = MFCreateMemoryBuffer(stream_info.cbSize, out_buf.GetAddressOf());
+        DWORD buf_size = (stream_info.cbSize > 0) ? stream_info.cbSize : (1920 * 1080 * 4);
+        hr = MFCreateMemoryBuffer(buf_size, out_buf.GetAddressOf());
         if (FAILED(hr)) return false;
 
-        hr = output_sample->AddBuffer(out_buf.Get());
-        if (FAILED(hr)) return false;
-
+        output_sample->AddBuffer(out_buf.Get());
         output_buffer.pSample = output_sample.Get();
     }
 
     DWORD status = 0;
     hr = mft_->ProcessOutput(0, 1, &output_buffer, &status);
 
-    // Release events if any
     if (output_buffer.pEvents) {
         output_buffer.pEvents->Release();
     }
 
-    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) {
-        // Decoder needs more NAL units before producing a frame
-        return false;
-    }
+    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) return false;
 
     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
-        // Output format changed — renegotiate
         Logger::info("MFT stream change — renegotiating output type");
         if (!negotiate_output_type()) {
-            Logger::error("Failed to renegotiate output type after stream change");
+            Logger::error("Failed to renegotiate output type");
             return false;
         }
-        // Retry ProcessOutput with the new type
         return try_get_output_frame(out_texture);
     }
 
@@ -396,100 +291,98 @@ bool MFVideoDecoder::try_get_output_frame(
         return false;
     }
 
-    // Extract the texture from the output sample
-    IMFSample* result_sample = output_buffer.pSample;
-    if (!result_sample) return false;
+    IMFSample* result = output_buffer.pSample;
+    if (!result) return false;
 
-    return extract_texture_from_sample(result_sample, out_texture);
+    return extract_texture_from_sample(result, out_texture);
 }
 
 bool MFVideoDecoder::extract_texture_from_sample(
     IMFSample* sample,
     Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture
 ) {
-    // Get the buffer from the sample
     Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
     HRESULT hr = sample->ConvertToContiguousBuffer(buffer.GetAddressOf());
-    if (FAILED(hr)) {
-        Logger::error("ConvertToContiguousBuffer failed: 0x{:08X}", hr);
-        return false;
-    }
+    if (FAILED(hr)) return false;
 
-    // Try to get a DXGI buffer (hardware-decoded texture)
+    // Try DXGI buffer (hardware-decoded texture)
     Microsoft::WRL::ComPtr<IMFDXGIBuffer> dxgi_buffer;
     hr = buffer.As(&dxgi_buffer);
     if (SUCCEEDED(hr)) {
-        // Hardware path: extract the D3D11 texture directly
         hr = dxgi_buffer->GetResource(IID_PPV_ARGS(out_texture.GetAddressOf()));
-        if (SUCCEEDED(hr)) {
-            return true;
-        }
-        Logger::debug("GetResource from DXGI buffer failed: 0x{:08X}", hr);
+        if (SUCCEEDED(hr)) return true;
     }
 
-    // Software fallback: create a texture from CPU memory
-    // Determine actual row pitch — MF decoders may pad rows for alignment
-    LONG actual_stride = output_stride_;
-
-    // Try IMF2DBuffer for the most accurate stride
-    Microsoft::WRL::ComPtr<IMF2DBuffer> buffer_2d;
-    if (SUCCEEDED(buffer.As(&buffer_2d))) {
-        BYTE* scanline0 = nullptr;
-        LONG pitch_2d = 0;
-        if (SUCCEEDED(buffer_2d->Lock2D(&scanline0, &pitch_2d))) {
-            actual_stride = (pitch_2d < 0) ? -pitch_2d : pitch_2d;
-            buffer_2d->Unlock2D();
-        }
-    }
-
+    // Software path: create a standard texture from CPU memory
     BYTE* raw_data = nullptr;
-    DWORD max_length = 0;
-    DWORD current_length = 0;
+    DWORD max_length = 0, current_length = 0;
     hr = buffer->Lock(&raw_data, &max_length, &current_length);
     if (FAILED(hr) || !raw_data) return false;
 
-    // Get output dimensions from the current output type
+    // Get dimensions from current output type
     Microsoft::WRL::ComPtr<IMFMediaType> output_type;
     hr = mft_->GetOutputCurrentType(0, output_type.GetAddressOf());
-    if (FAILED(hr)) {
-        buffer->Unlock();
-        return false;
-    }
+    if (FAILED(hr)) { buffer->Unlock(); return false; }
 
     UINT32 width = 0, height = 0;
     hr = MFGetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE, &width, &height);
-    if (FAILED(hr) || width == 0 || height == 0) {
-        buffer->Unlock();
-        return false;
+    if (FAILED(hr) || width == 0 || height == 0) { buffer->Unlock(); return false; }
+
+    // Determine stride from IMF2DBuffer or default
+    LONG stride = output_stride_;
+    Microsoft::WRL::ComPtr<IMF2DBuffer> buffer_2d;
+    if (SUCCEEDED(buffer.As(&buffer_2d))) {
+        BYTE* scanline = nullptr;
+        LONG pitch = 0;
+        if (SUCCEEDED(buffer_2d->Lock2D(&scanline, &pitch))) {
+            stride = (pitch < 0) ? -pitch : pitch;
+            raw_data = scanline;  // Use Lock2D pointer for correct layout
+            // Don't Unlock the original buffer — use Lock2D data
+        }
     }
 
-    // Use width as final fallback if stride is still 0
-    if (actual_stride <= 0) {
-        actual_stride = static_cast<LONG>(width);
+    if (stride <= 0) {
+        stride = (output_dxgi_format_ == DXGI_FORMAT_B8G8R8A8_UNORM)
+            ? static_cast<LONG>(width * 4)
+            : static_cast<LONG>(width);
     }
 
-    // Create a staging NV12 texture and copy the data
+    // Create texture with the decoded BGRA data
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
     desc.Height = height;
     desc.MipLevels = 1;
     desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_NV12;
+    desc.Format = output_dxgi_format_;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-    // NV12 layout: Y plane (width*height) + UV plane (width*(height/2))
+    // For BGRA with negative stride (bottom-up), flip the pointer
+    const BYTE* src_data = raw_data;
+    LONG src_pitch = stride;
+    if (stride < 0) {
+        // Bottom-up DIB — start from last row, negative pitch
+        src_data = raw_data + (-stride) * (height - 1);
+        src_pitch = stride;  // Negative pitch for bottom-up
+    }
+
     D3D11_SUBRESOURCE_DATA init_data{};
-    init_data.pSysMem = raw_data;
-    init_data.SysMemPitch = static_cast<UINT>(actual_stride);
+    init_data.pSysMem = src_data;
+    init_data.SysMemPitch = static_cast<UINT>((src_pitch < 0) ? -src_pitch : src_pitch);
 
     hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
-    buffer->Unlock();
+
+    // Unlock whichever buffer we locked
+    if (buffer_2d) {
+        buffer_2d->Unlock2D();
+    } else {
+        buffer->Unlock();
+    }
 
     if (FAILED(hr)) {
-        Logger::error("CreateTexture2D (software fallback) failed: 0x{:08X}, "
-                      "{}x{}, stride={}", hr, width, height, actual_stride);
+        Logger::error("CreateTexture2D failed: 0x{:08X} ({}x{}, fmt={})",
+                      hr, width, height, static_cast<int>(output_dxgi_format_));
         return false;
     }
 
@@ -498,9 +391,7 @@ bool MFVideoDecoder::extract_texture_from_sample(
 
 void MFVideoDecoder::flush() {
     if (!initialized_ || !mft_) return;
-
     mft_->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
-    Logger::debug("MFT flushed");
 }
 
 void MFVideoDecoder::shutdown() {
@@ -517,6 +408,8 @@ void MFVideoDecoder::shutdown() {
     device_.Reset();
     device_manager_token_ = 0;
     output_type_set_ = false;
+    output_mf_format_ = {};
+    output_dxgi_format_ = DXGI_FORMAT_UNKNOWN;
     output_stride_ = 0;
     first_frame_logged_ = false;
     initialized_ = false;
