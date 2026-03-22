@@ -10,24 +10,21 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
-#include <vector>
 
 namespace reflection {
 
 class AirPlayService;
-class MFVideoDecoder;
+class IGStreamerPipeline;
 class MirrorWindow;
 class SystemTray;
-class VideoFrameQueue;
 struct AirPlayClientInfo;
 
 /// Main application class.
 ///
-/// Architecture: decode thread produces raw BGRA pixels, main thread
-/// creates the D3D11 texture and renders. This avoids GPU driver issues
-/// with CreateTexture2D on background threads (especially on Hyper-V
-/// virtual GPUs where pSysMem copies may be deferred).
+/// Architecture: GStreamer handles all heavy lifting (H.264 decode,
+/// NV12→RGB conversion, rendering) on its own internal threads.
+/// The main thread only runs the Win32 message loop for UI responsiveness.
+/// Video/audio data flows directly from RAOP callbacks → GStreamer appsrc.
 class App {
 public:
     explicit App(HINSTANCE instance);
@@ -46,19 +43,7 @@ private:
     std::unique_ptr<SystemTray> system_tray_;
     std::unique_ptr<MirrorWindow> mirror_window_;
     std::unique_ptr<AirPlayService> airplay_service_;
-    std::unique_ptr<MFVideoDecoder> decoder_;
-    std::unique_ptr<VideoFrameQueue> frame_queue_;
-    std::jthread decode_thread_;
-
-    // Shared state: raw BGRA pixels from decode thread → main thread.
-    // Using raw bytes instead of ID3D11Texture2D avoids all GPU threading
-    // issues. The main thread creates the texture on the UI thread where
-    // the D3D11 immediate context lives.
-    std::mutex frame_mutex_;
-    std::vector<uint8_t> latest_bgra_;
-    int latest_width_ = 0;
-    int latest_height_ = 0;
-    bool has_new_frame_ = false;
+    std::unique_ptr<IGStreamerPipeline> pipeline_;
 
     std::mutex connection_mutex_;
     std::optional<std::string> pending_device_name_;
@@ -71,8 +56,6 @@ private:
     void on_ipad_connected();
     void on_ipad_disconnected();
     void on_mirror_window_closed();
-    void on_render_timer();
-    void decode_loop(std::stop_token stop_token);
     void cleanup_mirror_session();
 
     static LRESULT CALLBACK message_wnd_proc(

@@ -32,21 +32,41 @@ message(STATUS "Found libplist: ${PLIST_LIBRARY}")
 # GStreamer — required for decode/render pipeline when USE_UXPLAY is ON
 find_package(PkgConfig QUIET)
 if(USE_UXPLAY)
-    if(NOT PkgConfig_FOUND)
-        message(FATAL_ERROR
-            "PkgConfig is required for GStreamer discovery.\n"
-            "On MSYS2: pacman -S mingw-w64-ucrt-x86_64-pkg-config\n"
-            "Or set PKG_CONFIG_EXECUTABLE manually."
-        )
+    if(PkgConfig_FOUND)
+        # Use pkg-config (works with both MSYS2 and GStreamer MSVC installer)
+        # For MSVC installer: set PKG_CONFIG_PATH=C:/gstreamer/1.0/msvc_x86_64/lib/pkgconfig
+        # and ensure C:/gstreamer/1.0/msvc_x86_64/bin is in PATH
+        pkg_check_modules(GST REQUIRED gstreamer-1.0)
+        pkg_check_modules(GST_APP REQUIRED gstreamer-app-1.0)
+        pkg_check_modules(GST_VIDEO REQUIRED gstreamer-video-1.0)
+
+        message(STATUS "Found GStreamer: ${GST_VERSION}")
+        message(STATUS "  Include dirs: ${GST_INCLUDE_DIRS}")
+        message(STATUS "  Libraries: ${GST_LIBRARIES}")
+    else()
+        # Fallback: try to find GStreamer via environment variable
+        if(DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64})
+            set(GST_ROOT "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}")
+            message(STATUS "Using GStreamer from GSTREAMER_1_0_ROOT_MSVC_X86_64: ${GST_ROOT}")
+            set(GST_INCLUDE_DIRS "${GST_ROOT}/include/gstreamer-1.0" "${GST_ROOT}/include/glib-2.0" "${GST_ROOT}/lib/glib-2.0/include")
+            set(GST_LIBRARY_DIRS "${GST_ROOT}/lib")
+            set(GST_LIBRARIES gstreamer-1.0 glib-2.0 gobject-2.0)
+            set(GST_APP_LIBRARIES gstapp-1.0)
+            set(GST_VIDEO_LIBRARIES gstvideo-1.0)
+            set(GST_APP_INCLUDE_DIRS ${GST_INCLUDE_DIRS})
+            set(GST_VIDEO_INCLUDE_DIRS ${GST_INCLUDE_DIRS})
+            set(GST_APP_LIBRARY_DIRS ${GST_LIBRARY_DIRS})
+            set(GST_VIDEO_LIBRARY_DIRS ${GST_LIBRARY_DIRS})
+        else()
+            message(FATAL_ERROR
+                "GStreamer not found. Install options:\n"
+                "  1. MSVC: Install GStreamer MSVC from https://gstreamer.freedesktop.org/download/\n"
+                "     Set PKG_CONFIG_PATH=C:/gstreamer/1.0/msvc_x86_64/lib/pkgconfig\n"
+                "     Add C:/gstreamer/1.0/msvc_x86_64/bin to PATH\n"
+                "  2. MSYS2: pacman -S mingw-w64-ucrt-x86_64-gstreamer mingw-w64-ucrt-x86_64-gst-plugins-base"
+            )
+        endif()
     endif()
-
-    pkg_check_modules(GST REQUIRED gstreamer-1.0)
-    pkg_check_modules(GST_APP REQUIRED gstreamer-app-1.0)
-    pkg_check_modules(GST_VIDEO REQUIRED gstreamer-video-1.0)
-
-    message(STATUS "Found GStreamer: ${GST_VERSION}")
-    message(STATUS "  Include dirs: ${GST_INCLUDE_DIRS}")
-    message(STATUS "  Libraries: ${GST_LIBRARIES}")
 endif()
 
 # FDK-AAC via vcpkg (optional — only needed for legacy RPiPlay pipeline)
@@ -97,10 +117,6 @@ set(REFLECTION_SOURCES
     src/mdns/MdnsServiceRecord.cpp
     src/mdns/MjanssonMdnsAdvertiser.cpp
     src/mdns/NativeMdnsAdvertiser.cpp
-    src/decode/MFVideoDecoder.cpp
-    src/decode/FdkAacDecoder.cpp
-    src/render/D3D11Renderer.cpp
-    src/render/WasapiRenderer.cpp
     src/views/MirrorWindow.cpp
     src/views/OnboardingWindow.cpp
     src/views/OverlayRenderer.cpp
@@ -112,12 +128,20 @@ set(REFLECTION_SOURCES
 
 # Add the appropriate AirPlay core wrapper and pipeline
 if(USE_UXPLAY)
+    # UxPlay + GStreamer path: GStreamer handles ALL decode/render
     list(APPEND REFLECTION_SOURCES
         src/airplay/UxPlayCore.cpp
         src/pipeline/GStreamerPipeline.cpp
     )
 else()
-    list(APPEND REFLECTION_SOURCES src/airplay/RPiPlayCore.cpp)
+    # Legacy RPiPlay path: uses MF/D3D11 decode/render
+    list(APPEND REFLECTION_SOURCES
+        src/airplay/RPiPlayCore.cpp
+        src/decode/MFVideoDecoder.cpp
+        src/decode/FdkAacDecoder.cpp
+        src/render/D3D11Renderer.cpp
+        src/render/WasapiRenderer.cpp
+    )
 endif()
 
 add_executable(Reflection WIN32 ${REFLECTION_SOURCES})
@@ -144,15 +168,7 @@ target_link_libraries(Reflection PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto
 
-    # Windows system libraries
-    d3d11
-    dxgi
-    d3dcompiler
-    mf
-    mfplat
-    mfreadwrite
-    mfuuid
-    wmcodecdspuuid
+    # Windows system libraries (always needed)
     ws2_32
     iphlpapi
     ole32
@@ -162,6 +178,20 @@ target_link_libraries(Reflection PRIVATE
     comctl32
     winhttp
 )
+
+# Legacy path: D3D11 + Media Foundation (only when NOT using GStreamer)
+if(NOT USE_UXPLAY)
+    target_link_libraries(Reflection PRIVATE
+        d3d11
+        dxgi
+        d3dcompiler
+        mf
+        mfplat
+        mfreadwrite
+        mfuuid
+        wmcodecdspuuid
+    )
+endif()
 
 # Link GStreamer libraries
 if(USE_UXPLAY)

@@ -55,16 +55,17 @@ target_sources(ReflectionTests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/airplay/AirPlayCallbackBridge.cpp
     ${CMAKE_SOURCE_DIR}/src/airplay/AirPlayTypes.cpp
 
-    # RPiPlayCore — links against airplay_core static lib
-    ${CMAKE_SOURCE_DIR}/src/airplay/RPiPlayCore.cpp
+    # AirPlay core wrapper — depends on which backend is selected
+    $<$<BOOL:${USE_UXPLAY}>:${CMAKE_SOURCE_DIR}/src/airplay/UxPlayCore.cpp>
+    $<$<NOT:$<BOOL:${USE_UXPLAY}>>:${CMAKE_SOURCE_DIR}/src/airplay/RPiPlayCore.cpp>
 )
 
 target_link_libraries(ReflectionTests PRIVATE
     GTest::gtest
     GTest::gtest_main
 
-    # RPiPlay core library (needed by RPiPlayCore.cpp)
-    airplay_core
+    # AirPlay core library (UxPlay or RPiPlay depending on config)
+    ${AIRPLAY_CORE_LIB}
     mdns
 
     # OpenSSL (needed by airplay_core)
@@ -84,6 +85,7 @@ target_compile_definitions(ReflectionTests PRIVATE
     UNICODE
     _UNICODE
     _CRT_SECURE_NO_WARNINGS
+    $<$<BOOL:${USE_UXPLAY}>:USE_UXPLAY=1>
 )
 
 gtest_discover_tests(ReflectionTests)

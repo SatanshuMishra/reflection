@@ -4,13 +4,11 @@
 #include "airplay/AirPlayTypes.h"
 #ifdef USE_UXPLAY
 #include "airplay/UxPlayCore.h"
+#include "pipeline/GStreamerPipeline.h"
 #else
 #include "airplay/RPiPlayCore.h"
 #endif
-#include "decode/MFVideoDecoder.h"
-#include "decode/VideoFrameQueue.h"
 #include "mdns/NativeMdnsAdvertiser.h"
-#include "render/D3D11Renderer.h"
 #include "views/MirrorWindow.h"
 #include "utilities/Constants.h"
 #include "utilities/Logger.h"
@@ -25,8 +23,6 @@
 
 #include <vector>
 
-// Link dependencies are managed by CMakeLists.txt: iphlpapi
-
 namespace reflection {
 
 App::App(HINSTANCE instance)
@@ -35,17 +31,12 @@ App::App(HINSTANCE instance)
 }
 
 App::~App() {
-    // Clean up mirror session first
     cleanup_mirror_session();
 
-    // Stop AirPlay service before window destruction
     if (airplay_service_) {
         airplay_service_->stop();
     }
 
-    // System tray icon removed automatically by SystemTray destructor
-
-    // Destroy message window
     if (message_hwnd_) {
         DestroyWindow(message_hwnd_);
         message_hwnd_ = nullptr;
@@ -55,34 +46,26 @@ App::~App() {
 bool App::init(int /*cmd_show*/) {
     Logger::info("Initializing application...");
 
-    // Create hidden message window for tray icon messages
     if (!create_message_window()) {
         Logger::error("Failed to create message window");
         return false;
     }
 
-    // Install system tray icon
     system_tray_ = std::make_unique<SystemTray>(instance_);
     if (!system_tray_->install(message_hwnd_)) {
         Logger::error("Failed to install system tray icon");
         return false;
     }
 
-    // Wire tray menu callbacks
     system_tray_->set_menu_callback(
         [this](int id) { on_tray_menu(id); });
 
-    // Create frame queue early — it needs to exist before RAOP callbacks fire
-    frame_queue_ = std::make_unique<VideoFrameQueue>();
-
-    // Start AirPlay service (mDNS + RAOP)
     if (!start_airplay_service()) {
         Logger::error("Failed to start AirPlay service — iPad won't see this PC");
-        system_tray_->set_tooltip(L"Reflection — AirPlay failed to start");
-        // Continue anyway — user can see the tray icon and quit
+        system_tray_->set_tooltip(L"Reflection \u2014 AirPlay failed to start");
     }
 
-    Logger::info("Application initialized — waiting for AirPlay connections...");
+    Logger::info("Application initialized \u2014 waiting for AirPlay connections...");
     return true;
 }
 
@@ -99,7 +82,6 @@ int App::run() {
 }
 
 bool App::create_message_window() {
-    // Register a simple window class for the hidden message window
     WNDCLASSEX wc{};
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.lpfnWndProc = message_wnd_proc;
@@ -108,17 +90,16 @@ bool App::create_message_window() {
 
     RegisterClassEx(&wc);
 
-    // Create a message-only window (HWND_MESSAGE parent = invisible, no taskbar)
     message_hwnd_ = CreateWindowEx(
         0,
         constants::kAppWindowClass.data(),
         constants::kAppName.data(),
-        0,  // No styles needed for a message-only window
+        0,
         0, 0, 0, 0,
-        HWND_MESSAGE,  // Message-only window — invisible
+        HWND_MESSAGE,
         nullptr,
         instance_,
-        this  // Pass 'this' as lpParam for WM_CREATE
+        this
     );
 
     if (!message_hwnd_) {
@@ -143,23 +124,20 @@ void App::on_tray_menu(int menu_item_id) {
             Logger::info("Disconnect requested from tray menu");
             cleanup_mirror_session();
             if (system_tray_) {
-                system_tray_->set_tooltip(L"Reflection — Waiting for iPad...");
+                system_tray_->set_tooltip(L"Reflection \u2014 Waiting for iPad...");
             }
             break;
 
         case SystemTray::kMenuSettings:
             Logger::info("Settings requested from tray menu");
-            // TODO (Milestone 6): Open settings dialog
             break;
 
         case SystemTray::kMenuAbout:
             Logger::info("About requested from tray menu");
-            // TODO (Milestone 6): Show about dialog
             break;
 
         case SystemTray::kMenuCheckUpdate:
             Logger::info("Check for updates requested from tray menu");
-            // TODO (Milestone 6): Trigger UpdateChecker
             break;
 
         default:
@@ -173,7 +151,6 @@ LRESULT CALLBACK App::message_wnd_proc(
 ) {
     switch (msg) {
         case WM_CREATE: {
-            // Store 'this' pointer from CreateWindowEx lpParam
             auto* cs = reinterpret_cast<CREATESTRUCT*>(lp);
             SetWindowLongPtr(hwnd, GWLP_USERDATA,
                              reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
@@ -183,17 +160,6 @@ LRESULT CALLBACK App::message_wnd_proc(
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
-
-        case WM_TIMER: {
-            if (wp == constants::kRenderTimerId) {
-                auto* app = reinterpret_cast<App*>(
-                    GetWindowLongPtr(hwnd, GWLP_USERDATA));
-                if (app) {
-                    app->on_render_timer();
-                }
-            }
-            return 0;
-        }
 
         default:
             break;
@@ -211,7 +177,6 @@ LRESULT CALLBACK App::message_wnd_proc(
                     app->system_tray_->show_context_menu(hwnd);
                     break;
                 case WM_LBUTTONDBLCLK:
-                    // TODO (Milestone 6): Open settings or show status
                     break;
                 default:
                     break;
@@ -257,7 +222,6 @@ LRESULT CALLBACK App::message_wnd_proc(
 void App::on_ipad_connected() {
     Logger::info("Handling iPad connection on main thread");
 
-    // Get the device name stored by the RAOP callback thread
     std::string device_name;
     {
         std::lock_guard lock(connection_mutex_);
@@ -265,14 +229,13 @@ void App::on_ipad_connected() {
         pending_device_name_.reset();
     }
 
-    // If we already have a mirror window, just bring it to front
     if (mirror_window_ && mirror_window_->hwnd()) {
-        Logger::info("Mirror window already exists — bringing to front");
+        Logger::info("Mirror window already exists \u2014 bringing to front");
         SetForegroundWindow(mirror_window_->hwnd());
         return;
     }
 
-    // Create the mirror window with D3D11 renderer
+    // Create the mirror window (lightweight — no D3D11 renderer, GStreamer renders into it)
     mirror_window_ = std::make_unique<MirrorWindow>();
     std::wstring title = L"Reflection \u2014 " +
         std::wstring(device_name.begin(), device_name.end());
@@ -283,25 +246,21 @@ void App::on_ipad_connected() {
         return;
     }
 
-    // Initialize the H.264 decoder (CPU-only, no D3D11 dependency).
-    // The decoder produces raw BGRA bytes; the main thread creates textures.
-    decoder_ = std::make_unique<MFVideoDecoder>();
-    if (!decoder_->init()) {
-        Logger::error("Failed to initialize MFVideoDecoder");
-        decoder_.reset();
+#ifdef USE_UXPLAY
+    // Initialize GStreamer pipeline — handles ALL decode + render on GPU
+    pipeline_ = std::make_unique<GStreamerPipeline>();
+    if (!pipeline_->init(mirror_window_->hwnd())) {
+        Logger::error("Failed to initialize GStreamer pipeline");
+        pipeline_.reset();
+        mirror_window_.reset();
+        return;
     }
 
-    // Start background decode thread — handles ALL heavy work
-    // (H.264 decode ~20ms + NV12→BGRA ~8ms per frame)
-    decode_thread_ = std::jthread([this](std::stop_token token) {
-        decode_loop(token);
-    });
+    // Start the pipeline (transitions to PLAYING state)
+    pipeline_->start();
+    Logger::info("GStreamer pipeline started \u2014 rendering into mirror window");
+#endif
 
-    // Start render timer — only does fast GPU render (~3ms per frame)
-    SetTimer(message_hwnd_, constants::kRenderTimerId,
-             constants::kRenderTimerIntervalMs, nullptr);
-
-    // Update tray tooltip
     if (system_tray_) {
         std::wstring tooltip = L"Reflection \u2014 Connected: " +
             std::wstring(device_name.begin(), device_name.end());
@@ -312,7 +271,7 @@ void App::on_ipad_connected() {
 }
 
 void App::on_ipad_disconnected() {
-    Logger::info("iPad disconnected — cleaning up mirror session");
+    Logger::info("iPad disconnected \u2014 cleaning up mirror session");
     cleanup_mirror_session();
 
     if (system_tray_) {
@@ -322,25 +281,14 @@ void App::on_ipad_disconnected() {
 
 void App::on_mirror_window_closed() {
     Logger::info("Mirror window closed by user");
-    KillTimer(message_hwnd_, constants::kRenderTimerId);
 
-    // Stop decode thread FIRST (it references decoder_)
-    if (decode_thread_.joinable()) {
-        decode_thread_.request_stop();
-        decode_thread_.join();
+    // Stop GStreamer pipeline first
+    if (pipeline_) {
+        pipeline_->stop();
+        pipeline_.reset();
     }
 
-    decoder_.reset();
     mirror_window_.reset();
-
-    {
-        std::lock_guard lock(frame_mutex_);
-        latest_bgra_.clear();
-        latest_bgra_.shrink_to_fit();
-        has_new_frame_ = false;
-    }
-
-    if (frame_queue_) frame_queue_->clear();
 
     if (system_tray_) {
         system_tray_->set_tooltip(L"Reflection \u2014 Waiting for iPad...");
@@ -348,165 +296,12 @@ void App::on_mirror_window_closed() {
 }
 
 void App::cleanup_mirror_session() {
-    if (message_hwnd_) {
-        KillTimer(message_hwnd_, constants::kRenderTimerId);
+    if (pipeline_) {
+        pipeline_->stop();
+        pipeline_.reset();
     }
 
-    if (decode_thread_.joinable()) {
-        decode_thread_.request_stop();
-        decode_thread_.join();
-    }
-
-    decoder_.reset();
     mirror_window_.reset();
-
-    {
-        std::lock_guard lock(frame_mutex_);
-        latest_bgra_.clear();
-        latest_bgra_.shrink_to_fit();
-        has_new_frame_ = false;
-    }
-
-    if (frame_queue_) frame_queue_->clear();
-}
-
-void App::on_render_timer() {
-    // LIGHTWEIGHT: runs on main thread, must complete in <5ms.
-    if (!mirror_window_ || !mirror_window_->renderer()) return;
-
-    static uint64_t timer_ticks = 0;
-    static uint64_t frames_rendered = 0;
-    ++timer_ticks;
-
-    // Grab the latest decoded BGRA pixels from the decode thread.
-    // We std::move the vector to avoid holding the mutex during rendering.
-    std::vector<uint8_t> bgra;
-    int width = 0, height = 0;
-    bool has_frame = false;
-
-    {
-        std::lock_guard lock(frame_mutex_);
-        if (has_new_frame_) {
-            bgra = std::move(latest_bgra_);  // O(1) move
-            width = latest_width_;
-            height = latest_height_;
-            has_frame = true;
-            has_new_frame_ = false;
-        }
-    }
-
-    if (has_frame && !bgra.empty()) {
-        ++frames_rendered;
-        const int bgra_stride = width * 4;
-        mirror_window_->renderer()->render_video_frame(
-            bgra.data(), bgra_stride, width, height);
-
-        // Log periodically
-        if (frames_rendered % 30 == 0) {
-            Logger::debug("Render: displayed frame #{} (timer ticks={})",
-                          frames_rendered, timer_ticks);
-        }
-        return;
-    }
-}
-
-void App::decode_loop(std::stop_token stop_token) {
-    Logger::info("Decode thread started (IDR-aware skip-to-keyframe recovery)");
-
-    uint64_t frames_fed = 0;
-    uint64_t frames_decoded = 0;
-    uint64_t frames_skipped = 0;
-    uint64_t total_skipped = 0;
-    uint64_t empty_polls = 0;
-    auto last_stats = std::chrono::steady_clock::now();
-
-    while (!stop_token.stop_requested()) {
-        if (!frame_queue_ || !decoder_ || !decoder_->is_initialized()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
-
-        OwnedVideoFrame frame;
-        if (!frame_queue_->try_pop(frame)) {
-            ++empty_polls;
-            if (empty_polls == 500) {
-                Logger::warn("Decode: no frames for ~1s (queue empty)");
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            continue;
-        }
-
-        empty_polls = 0;
-
-        // === IDR-AWARE SKIP-TO-KEYFRAME RECOVERY ===
-        // When the decoder falls behind (queue growing), skip P-frames and
-        // wait for the next IDR/SPS to restart with a clean reference chain.
-        // This produces a momentary freeze instead of continuous corruption.
-        const auto queue_size = frame_queue_->size();
-
-        if (queue_size > 8 && !frame.is_idr_or_sps) {
-            // Decoder is behind — skip this P-frame
-            ++frames_skipped;
-            ++total_skipped;
-            continue;
-        }
-
-        // If we just skipped frames and hit an IDR/SPS, flush the decoder
-        // to clear stale reference frames before restarting
-        if (frames_skipped > 0 && frame.is_idr_or_sps) {
-            decoder_->flush();
-            Logger::info("Decoder flushed — skipped {} P-frames, restarting from IDR/SPS",
-                         frames_skipped);
-            frames_skipped = 0;
-        }
-
-        ++frames_fed;
-
-        // Log first few frames for diagnostics
-        if (frames_fed <= 3) {
-            Logger::debug("Decode: frame #{}, size={}, type={}, idr={}",
-                          frames_fed, frame.data.size(), frame.frame_type,
-                          frame.is_idr_or_sps);
-        }
-
-        DecodedFrame decoded_frame;
-        const bool decoded = decoder_->decode(
-            frame.data.data(),
-            frame.data.size(),
-            frame.timestamp,
-            decoded_frame);
-
-        if (decoded && !decoded_frame.bgra.empty()) {
-            ++frames_decoded;
-
-            if (frames_decoded == 1) {
-                Logger::info("First decoded frame: {}x{} (after {} input frames)",
-                             decoded_frame.width, decoded_frame.height, frames_fed);
-            }
-
-            // Store raw BGRA bytes for the main thread
-            {
-                std::lock_guard lock(frame_mutex_);
-                latest_bgra_ = std::move(decoded_frame.bgra);
-                latest_width_ = decoded_frame.width;
-                latest_height_ = decoded_frame.height;
-                has_new_frame_ = true;
-            }
-        }
-
-        // Pipeline metrics every 5 seconds
-        const auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats).count() >= 5) {
-            const auto dropped = frame_queue_->take_drop_count();
-            const auto received = frame_queue_->take_receive_count();
-            Logger::info("Pipeline: recv={} drop={} skip={} decode={} queue={}",
-                         received, dropped, total_skipped, frames_decoded, queue_size);
-            last_stats = now;
-        }
-    }
-
-    Logger::info("Decode thread stopped (fed={}, decoded={}, skipped={})",
-                 frames_fed, frames_decoded, total_skipped);
 }
 
 // ---------------------------------------------------------------------------
@@ -514,7 +309,6 @@ void App::decode_loop(std::stop_token stop_token) {
 // ---------------------------------------------------------------------------
 
 std::array<uint8_t, 6> App::get_machine_mac_address() {
-    // Use GetAdaptersAddresses to find the first active Ethernet/Wi-Fi adapter's MAC
     ULONG buf_size = 15000;
     std::vector<uint8_t> buffer(buf_size);
     auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
@@ -553,7 +347,6 @@ std::array<uint8_t, 6> App::get_machine_mac_address() {
 bool App::start_airplay_service() {
     Logger::info("Starting AirPlay service...");
 
-    // Create production dependencies
 #ifdef USE_UXPLAY
     auto core = std::make_unique<UxPlayCore>();
 #else
@@ -564,54 +357,42 @@ bool App::start_airplay_service() {
     airplay_service_ = std::make_unique<AirPlayService>(
         std::move(core), std::move(mdns));
 
-    // Set up callbacks for connection events
-    // NOTE: These fire on internal RAOP threads — use PostMessage to marshal
-    // to the main thread for UI operations.
-
     airplay_service_->set_client_connected_callback(
         [this](const AirPlayClientInfo& client) {
             Logger::info("iPad connected: {} ({})",
                          client.device_name, client.device_id);
 
-            // Store connection info (thread-safe)
             {
                 std::lock_guard lock(connection_mutex_);
                 pending_device_name_ = client.device_name;
             }
 
-            // Marshal to main thread
             PostMessage(message_hwnd_, constants::kWmIpadConnected, 0, 0);
         });
 
     airplay_service_->set_client_disconnected_callback(
         [this](const std::string& device_id) {
             Logger::info("iPad disconnected: {}", device_id);
-
-            // Marshal to main thread
             PostMessage(message_hwnd_, constants::kWmIpadDisconnected, 0, 0);
         });
 
     airplay_service_->set_video_frame_callback(
-        [this](const uint8_t* data, size_t size, uint64_t timestamp, uint8_t frame_type) {
-            // RAOP thread — copy data into IDR-aware queue for decode thread.
-            static uint64_t cb_count = 0;
-            ++cb_count;
-
-            if (cb_count == 1) {
-                Logger::info("App: first video frame — size={}, type={}", size, frame_type);
-            }
-
-            if (frame_queue_) {
-                frame_queue_->push(data, size, timestamp, frame_type);
+        [this](const uint8_t* data, size_t size, uint64_t timestamp, uint8_t /*frame_type*/) {
+            // Push H.264 NAL units directly to GStreamer — thread-safe via GstAppSrc.
+            // No queue, no decode thread, no CPU-side BGRA conversion needed.
+            if (pipeline_) {
+                pipeline_->push_video_data(data, size, timestamp);
             }
         });
 
     airplay_service_->set_audio_frame_callback(
-        [](const uint8_t* /*data*/, size_t /*size*/, uint64_t /*timestamp*/) {
-            // TODO (Milestone 4): Decode AAC-ELD → WASAPI playback
+        [this](const uint8_t* data, size_t size, uint64_t timestamp) {
+            // Push audio directly to GStreamer audio pipeline
+            if (pipeline_) {
+                pipeline_->push_audio_data(data, size, timestamp);
+            }
         });
 
-    // Configure the AirPlay service
     const AirPlayServiceConfig config{
         .server_name = "Reflection",
         .hardware_address = get_machine_mac_address(),
@@ -624,7 +405,7 @@ bool App::start_airplay_service() {
         return false;
     }
 
-    Logger::info("AirPlay service running — iPad should see 'Reflection' in Screen Mirroring");
+    Logger::info("AirPlay service running \u2014 iPad should see 'Reflection' in Screen Mirroring");
     return true;
 }
 

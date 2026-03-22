@@ -6,14 +6,19 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <objbase.h>
+
+#ifdef USE_UXPLAY
+#include <gst/gst.h>
+#else
 #include <mfapi.h>
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfuuid.lib")
+#endif
 
 #include "app/App.h"
 #include "utilities/Logger.h"
 
 #pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "mfplat.lib")
-#pragma comment(lib, "mfuuid.lib")
 
 namespace {
 
@@ -56,6 +61,24 @@ struct ComGuard {
     ComGuard& operator=(const ComGuard&) = delete;
 };
 
+#ifdef USE_UXPLAY
+/// RAII wrapper for GStreamer initialization.
+struct GStreamerGuard {
+    bool initialized = false;
+
+    GStreamerGuard() {
+        gst_init(nullptr, nullptr);
+        initialized = true;  // gst_init always succeeds or aborts
+    }
+
+    ~GStreamerGuard() {
+        gst_deinit();
+    }
+
+    GStreamerGuard(const GStreamerGuard&) = delete;
+    GStreamerGuard& operator=(const GStreamerGuard&) = delete;
+};
+#else
 /// RAII wrapper for Media Foundation initialization.
 struct MFGuard {
     bool initialized = false;
@@ -74,6 +97,7 @@ struct MFGuard {
     MFGuard(const MFGuard&) = delete;
     MFGuard& operator=(const MFGuard&) = delete;
 };
+#endif
 
 } // namespace
 
@@ -99,11 +123,20 @@ int WINAPI wWinMain(
         return 1;
     }
 
+#ifdef USE_UXPLAY
+    const GStreamerGuard gst;
+    if (!gst.initialized) {
+        reflection::Logger::error("Failed to initialize GStreamer");
+        return 1;
+    }
+    reflection::Logger::info("GStreamer {} initialized", gst_version_string());
+#else
     const MFGuard mf;
     if (!mf.initialized) {
         reflection::Logger::error("Failed to initialize Media Foundation");
         return 1;
     }
+#endif
 
     reflection::Logger::info("All subsystems initialized");
 
