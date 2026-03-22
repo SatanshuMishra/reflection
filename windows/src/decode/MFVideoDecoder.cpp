@@ -467,9 +467,7 @@ void MFVideoDecoder::shutdown() {
     }
 
     mft_.Reset();
-    device_manager_.Reset();
     device_.Reset();
-    device_manager_token_ = 0;
     output_type_set_ = false;
     output_mf_format_ = {};
     output_dxgi_format_ = DXGI_FORMAT_UNKNOWN;
