@@ -279,21 +279,22 @@ void App::on_ipad_connected() {
         return;
     }
 
-    // Initialize the H.264 decoder with the renderer's D3D11 device
+    // Initialize the H.264 decoder with the renderer's D3D11 device.
+    // ID3D11Device::CreateTexture2D is thread-safe (internal locking),
+    // so the decoder can be used from the background decode thread.
     decoder_ = std::make_unique<MFVideoDecoder>();
     if (!decoder_->init(mirror_window_->renderer()->device())) {
         Logger::error("Failed to initialize MFVideoDecoder");
         decoder_.reset();
-        // Keep the window open — it will show the background color
     }
 
-    // DO NOT clear the frame queue here. RPiPlay's RAOP thread starts
-    // sending SPS/PPS and IDR frames immediately on connection — often
-    // BEFORE decoder init completes (~100ms). Clearing the queue would
-    // discard the SPS/PPS that the decoder needs to produce its first
-    // output frame. The queue contents are exactly what we need.
+    // Start background decode thread — handles ALL heavy work
+    // (H.264 decode ~20ms + NV12→BGRA ~8ms per frame)
+    decode_thread_ = std::jthread([this](std::stop_token token) {
+        decode_loop(token);
+    });
 
-    // Start the render timer (~60fps)
+    // Start render timer — only does fast GPU render (~3ms per frame)
     SetTimer(message_hwnd_, constants::kRenderTimerId,
              constants::kRenderTimerIntervalMs, nullptr);
 
@@ -318,20 +319,24 @@ void App::on_ipad_disconnected() {
 
 void App::on_mirror_window_closed() {
     Logger::info("Mirror window closed by user");
-
-    // Kill the render timer
     KillTimer(message_hwnd_, constants::kRenderTimerId);
 
-    // Clean up decoder (but keep frame_queue_ for potential reconnection)
-    decoder_.reset();
+    // Stop decode thread FIRST (it references decoder_)
+    if (decode_thread_.joinable()) {
+        decode_thread_.request_stop();
+        decode_thread_.join();
+    }
 
-    // The window is already being destroyed by the OS, just release our pointer
-    // (don't call close() which would try DestroyWindow again)
+    decoder_.reset();
     mirror_window_.reset();
 
-    if (frame_queue_) {
-        frame_queue_->clear();
+    {
+        std::lock_guard lock(frame_mutex_);
+        latest_frame_.Reset();
+        has_new_frame_ = false;
     }
+
+    if (frame_queue_) frame_queue_->clear();
 
     if (system_tray_) {
         system_tray_->set_tooltip(L"Reflection \u2014 Waiting for iPad...");
@@ -339,48 +344,81 @@ void App::on_mirror_window_closed() {
 }
 
 void App::cleanup_mirror_session() {
-    // Kill render timer
     if (message_hwnd_) {
         KillTimer(message_hwnd_, constants::kRenderTimerId);
     }
 
-    // Destroy decoder
-    decoder_.reset();
+    // Stop decode thread FIRST
+    if (decode_thread_.joinable()) {
+        decode_thread_.request_stop();
+        decode_thread_.join();
+    }
 
-    // Close mirror window (this shuts down D3D11Renderer internally)
+    decoder_.reset();
     mirror_window_.reset();
 
-    // Clear frame queue
-    if (frame_queue_) {
-        frame_queue_->clear();
+    {
+        std::lock_guard lock(frame_mutex_);
+        latest_frame_.Reset();
+        has_new_frame_ = false;
     }
+
+    if (frame_queue_) frame_queue_->clear();
 }
 
 void App::on_render_timer() {
+    // LIGHTWEIGHT: This runs on the main thread and must complete in <5ms
+    // to keep the window responsive. All heavy work (decode, NV12→BGRA)
+    // happens on the background decode thread.
+
     if (!mirror_window_ || !mirror_window_->renderer()) return;
-    if (!frame_queue_) return;
-    if (!decoder_ || !decoder_->is_initialized()) return;
 
-    // Feed queued frames to the decoder, but limit per tick to keep the
-    // main thread responsive. Software H.264 decode of a 1080p frame takes
-    // ~10-30ms. We must leave enough time for the Win32 message pump to
-    // process WM_PAINT, mouse events, etc., or Windows marks the window
-    // "Not Responding" after 5 seconds of unresponsiveness.
-    constexpr int kMaxFramesPerTick = 1;
+    // Grab the latest decoded frame from the decode thread
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    int width = 0, height = 0;
+    bool has_frame = false;
 
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> last_texture;
-    int last_width = 0;
-    int last_height = 0;
+    {
+        std::lock_guard lock(frame_mutex_);
+        if (has_new_frame_) {
+            texture = latest_frame_;  // AddRef — safe to use on main thread
+            width = latest_frame_width_;
+            height = latest_frame_height_;
+            has_frame = true;
+            has_new_frame_ = false;
+        }
+    }
 
-    static uint64_t total_frames_fed = 0;
-    static uint64_t total_frames_decoded = 0;
-    static bool rendered_blank = false;
+    if (has_frame && texture) {
+        // Fast GPU render: upload texture + draw fullscreen triangle (~3ms)
+        mirror_window_->renderer()->render_video_frame(
+            texture.Get(), width, height);
+        return;
+    }
 
-    int frames_this_tick = 0;
-    OwnedVideoFrame frame;
-    while (frames_this_tick < kMaxFramesPerTick && frame_queue_->try_pop(frame)) {
-        ++frames_this_tick;
-        ++total_frames_fed;
+    // No new frame — don't re-Present (previous frame is still displayed)
+}
+
+void App::decode_loop(std::stop_token stop_token) {
+    Logger::info("Decode thread started");
+
+    uint64_t frames_fed = 0;
+    uint64_t frames_decoded = 0;
+
+    while (!stop_token.stop_requested()) {
+        if (!frame_queue_ || !decoder_ || !decoder_->is_initialized()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        OwnedVideoFrame frame;
+        if (!frame_queue_->try_pop(frame)) {
+            // No frame available — yield briefly
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
+        ++frames_fed;
 
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
         const bool decoded = decoder_->decode(
@@ -390,44 +428,34 @@ void App::on_render_timer() {
             texture);
 
         if (decoded && texture) {
-            ++total_frames_decoded;
+            ++frames_decoded;
+
             D3D11_TEXTURE2D_DESC desc{};
             texture->GetDesc(&desc);
-            last_texture = std::move(texture);
-            last_width = static_cast<int>(desc.Width);
-            last_height = static_cast<int>(desc.Height);
 
-            // Log first successful decode
-            if (total_frames_decoded == 1) {
+            if (frames_decoded == 1) {
                 Logger::info("First decoded frame: {}x{} (after {} input frames)",
-                             last_width, last_height, total_frames_fed);
+                             desc.Width, desc.Height, frames_fed);
             }
+
+            // Store for the main thread's render timer to pick up
+            {
+                std::lock_guard lock(frame_mutex_);
+                latest_frame_ = std::move(texture);
+                latest_frame_width_ = static_cast<int>(desc.Width);
+                latest_frame_height_ = static_cast<int>(desc.Height);
+                has_new_frame_ = true;
+            }
+        }
+
+        // Periodic stats
+        if (frames_fed % 300 == 0) {
+            Logger::info("Decode stats: fed={}, decoded={}, queue={}",
+                         frames_fed, frames_decoded, frame_queue_->size());
         }
     }
 
-    // Periodic stats logging
-    if (total_frames_fed > 0 && total_frames_fed % 300 == 0) {
-        Logger::info("Render stats: fed={}, decoded={}, queue_size={}",
-                     total_frames_fed, total_frames_decoded, frame_queue_->size());
-    }
-
-    if (last_texture) {
-        // Render the most recently decoded frame
-        mirror_window_->renderer()->render_video_frame(
-            last_texture.Get(), last_width, last_height);
-        rendered_blank = false;
-        return;
-    }
-
-    // No decoded frame available — render blank background ONCE.
-    // Do NOT call render_frame()/Present every tick when idle. Present()
-    // submits a frame to DWM and has overhead even without VSync. Calling
-    // it 60 times/sec with no new content wastes CPU and can starve the
-    // message pump on slower machines.
-    if (!rendered_blank) {
-        mirror_window_->renderer()->render_frame();
-        rendered_blank = true;
-    }
+    Logger::info("Decode thread stopped (fed={}, decoded={})", frames_fed, frames_decoded);
 }
 
 // ---------------------------------------------------------------------------

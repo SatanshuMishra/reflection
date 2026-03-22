@@ -5,11 +5,16 @@
 #endif
 #include <Windows.h>
 
+#include <d3d11.h>
+#include <wrl/client.h>
+
 #include <array>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace reflection {
 
@@ -20,75 +25,80 @@ class SystemTray;
 class VideoFrameQueue;
 struct AirPlayClientInfo;
 
-/// Main application class. Manages the message loop, system tray,
-/// and coordinates between AirPlay service and mirror windows.
+/// Main application class.
 ///
-/// On startup, the app runs as a tray-only application. When an iPad
-/// connects via AirPlay, a mirror window is created with D3D11 rendering.
-/// The WM_TIMER render loop decodes H.264 frames and displays them.
+/// Architecture for responsive mirroring with software H.264 decode:
+///
+///   RAOP thread (RPiPlay)     Decode thread (App)      Main thread (App)
+///   ─────────────────────     ───────────────────      ─────────────────
+///   receive H.264 NALUs  →   pop from queue       ←   WM_TIMER fires
+///   push to frame_queue_ →   MFT decode (~20ms)       grab latest_frame_
+///                             NV12→BGRA (~8ms)         upload to D3D11
+///                             store in latest_frame_   Draw + Present (~3ms)
+///                                                      process WM_PAINT, etc.
+///
+/// The decode thread handles ALL heavy work. The main thread only does
+/// the fast GPU render (~3ms), leaving ~30ms per timer tick for the
+/// Win32 message pump to process window messages → window stays responsive.
 class App {
 public:
     explicit App(HINSTANCE instance);
     ~App();
 
-    // Non-copyable
     App(const App&) = delete;
     App& operator=(const App&) = delete;
 
-    /// Initialize the application (AirPlay service, system tray, etc.).
-    /// Returns false if initialization fails.
     bool init(int cmd_show);
-
-    /// Run the Win32 message loop. Returns exit code.
     int run();
 
 private:
     HINSTANCE instance_;
     HWND message_hwnd_ = nullptr;
 
-    // UI components
+    // UI
     std::unique_ptr<SystemTray> system_tray_;
     std::unique_ptr<MirrorWindow> mirror_window_;
 
-    // AirPlay service
+    // AirPlay
     std::unique_ptr<AirPlayService> airplay_service_;
 
-    // Video pipeline (created on iPad connect, destroyed on disconnect)
+    // Video pipeline
     std::unique_ptr<MFVideoDecoder> decoder_;
     std::unique_ptr<VideoFrameQueue> frame_queue_;
 
-    // Thread-safe storage for connection info from RAOP thread
+    // Background decode thread
+    std::jthread decode_thread_;
+
+    // Latest decoded frame — written by decode thread, read by render timer.
+    // The texture is created via ID3D11Device::CreateTexture2D which is
+    // thread-safe (device has internal locking).
+    std::mutex frame_mutex_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> latest_frame_;
+    int latest_frame_width_ = 0;
+    int latest_frame_height_ = 0;
+    bool has_new_frame_ = false;
+
+    // Connection state
     std::mutex connection_mutex_;
     std::optional<std::string> pending_device_name_;
 
-    /// Create a hidden message-only window for receiving tray notifications.
     bool create_message_window();
-
-    /// Handle tray menu item selection.
     void on_tray_menu(int menu_item_id);
-
-    /// Read the machine's actual MAC address for AirPlay identification.
     static std::array<uint8_t, 6> get_machine_mac_address();
-
-    /// Start the AirPlay receiver service.
     bool start_airplay_service();
 
-    /// Handle iPad connection (called on main thread via PostMessage).
     void on_ipad_connected();
-
-    /// Handle iPad disconnection (called on main thread via PostMessage).
     void on_ipad_disconnected();
-
-    /// Handle mirror window close (called on main thread via PostMessage).
     void on_mirror_window_closed();
 
-    /// Process render timer tick — decode frames and render.
+    /// Render timer — grabs latest decoded frame and renders (~3ms).
     void on_render_timer();
 
-    /// Clean up the mirror session (decoder, window, queue).
+    /// Background decode loop — decodes H.264 + converts NV12→BGRA (~28ms/frame).
+    void decode_loop(std::stop_token stop_token);
+
     void cleanup_mirror_session();
 
-    /// WndProc for the hidden message window.
     static LRESULT CALLBACK message_wnd_proc(
         HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 };
