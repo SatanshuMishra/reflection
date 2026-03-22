@@ -45,29 +45,27 @@ bool MFVideoDecoder::init(ID3D11Device* device) {
     Logger::info("Initializing Media Foundation H.264 decoder");
     device_ = device;
 
-    // DXGI device manager for DXVA2 hardware acceleration
-    HRESULT hr = MFCreateDXGIDeviceManager(
-        &device_manager_token_, device_manager_.GetAddressOf());
-    if (FAILED(hr)) {
-        Logger::error("MFCreateDXGIDeviceManager failed: 0x{:08X}", hr);
-        return false;
-    }
-
-    hr = device_manager_->ResetDevice(device_.Get(), device_manager_token_);
-    if (FAILED(hr)) {
-        Logger::error("ResetDevice failed: 0x{:08X}", hr);
-        return false;
-    }
-
     if (!create_decoder_mft()) return false;
 
-    // Enable DXVA2 (non-fatal if it fails — software decode works)
-    hr = mft_->ProcessMessage(
-        MFT_MESSAGE_SET_D3D_MANAGER,
-        reinterpret_cast<ULONG_PTR>(device_manager_.Get()));
-    if (FAILED(hr)) {
-        Logger::warn("DXVA2 not available (0x{:08X}), using software decode", hr);
-    }
+    // DO NOT set a D3D device manager on the MFT. Without it, the software
+    // decoder allocates plain CPU memory buffers. This is critical because:
+    //
+    // 1. The decode runs on a background thread while the main thread uses
+    //    the D3D11 immediate context for rendering. The immediate context
+    //    is NOT thread-safe.
+    // 2. If we give the MFT our device manager, it allocates DXGI-backed
+    //    buffers. IMFMediaBuffer::Lock() on DXGI buffers internally uses
+    //    the immediate context to copy GPU→CPU, which deadlocks with the
+    //    main thread's Draw/Present calls.
+    // 3. We do NV12→BGRA conversion in CPU anyway, so GPU-backed buffers
+    //    provide no benefit — they just add a GPU→CPU copy that we skip
+    //    by using plain memory buffers.
+    //
+    // When hardware DXVA2 decode is implemented in the future (dedicated
+    // render thread), the device manager can be re-enabled.
+    Logger::info("Using CPU-only decode (no DXVA2 device manager)");
+
+    HRESULT hr;
 
     if (!set_input_type()) return false;
 
