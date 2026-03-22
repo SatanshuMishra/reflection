@@ -24,7 +24,7 @@ class AirPlayService {
 public:
     using ClientConnectedCallback = std::function<void(const AirPlayClientInfo&)>;
     using ClientDisconnectedCallback = std::function<void(const std::string& device_id)>;
-    using VideoFrameCallback = std::function<void(const uint8_t* data, size_t size, uint64_t timestamp)>;
+    using VideoFrameCallback = std::function<void(const uint8_t* data, size_t size, uint64_t timestamp, uint8_t frame_type)>;
     using AudioFrameCallback = std::function<void(const uint8_t* data, size_t size, uint64_t timestamp)>;
 
     /// Dependency-injected constructor for testability.

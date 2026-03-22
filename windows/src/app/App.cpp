@@ -407,12 +407,14 @@ void App::on_render_timer() {
 }
 
 void App::decode_loop(std::stop_token stop_token) {
-    Logger::info("Decode thread started");
+    Logger::info("Decode thread started (IDR-aware skip-to-keyframe recovery)");
 
     uint64_t frames_fed = 0;
     uint64_t frames_decoded = 0;
+    uint64_t frames_skipped = 0;
+    uint64_t total_skipped = 0;
     uint64_t empty_polls = 0;
-    auto last_activity = std::chrono::steady_clock::now();
+    auto last_stats = std::chrono::steady_clock::now();
 
     while (!stop_token.stop_requested()) {
         if (!frame_queue_ || !decoder_ || !decoder_->is_initialized()) {
@@ -423,26 +425,44 @@ void App::decode_loop(std::stop_token stop_token) {
         OwnedVideoFrame frame;
         if (!frame_queue_->try_pop(frame)) {
             ++empty_polls;
-            // Log if we haven't received frames for a while
-            if (empty_polls == 500) {  // ~1 second at 2ms sleep
-                const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - last_activity).count();
-                Logger::warn("Decode thread: no frames for ~1s (fed={}, decoded={}, "
-                             "elapsed={}s, queue_size={})",
-                             frames_fed, frames_decoded, elapsed, frame_queue_->size());
+            if (empty_polls == 500) {
+                Logger::warn("Decode: no frames for ~1s (queue empty)");
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
             continue;
         }
 
         empty_polls = 0;
-        last_activity = std::chrono::steady_clock::now();
+
+        // === IDR-AWARE SKIP-TO-KEYFRAME RECOVERY ===
+        // When the decoder falls behind (queue growing), skip P-frames and
+        // wait for the next IDR/SPS to restart with a clean reference chain.
+        // This produces a momentary freeze instead of continuous corruption.
+        const auto queue_size = frame_queue_->size();
+
+        if (queue_size > 8 && !frame.is_idr_or_sps) {
+            // Decoder is behind — skip this P-frame
+            ++frames_skipped;
+            ++total_skipped;
+            continue;
+        }
+
+        // If we just skipped frames and hit an IDR/SPS, flush the decoder
+        // to clear stale reference frames before restarting
+        if (frames_skipped > 0 && frame.is_idr_or_sps) {
+            decoder_->flush();
+            Logger::info("Decoder flushed — skipped {} P-frames, restarting from IDR/SPS",
+                         frames_skipped);
+            frames_skipped = 0;
+        }
+
         ++frames_fed;
 
-        // Log every 30th frame fed (roughly 1/sec at 30fps)
-        if (frames_fed <= 5 || frames_fed % 30 == 0) {
-            Logger::debug("Decode: feeding frame #{}, size={}, ts={}",
-                          frames_fed, frame.data.size(), frame.timestamp);
+        // Log first few frames for diagnostics
+        if (frames_fed <= 3) {
+            Logger::debug("Decode: frame #{}, size={}, type={}, idr={}",
+                          frames_fed, frame.data.size(), frame.frame_type,
+                          frame.is_idr_or_sps);
         }
 
         DecodedFrame decoded_frame;
@@ -460,29 +480,29 @@ void App::decode_loop(std::stop_token stop_token) {
                              decoded_frame.width, decoded_frame.height, frames_fed);
             }
 
-            if (frames_decoded % 30 == 0) {
-                Logger::debug("Decode: produced frame #{} ({}x{})",
-                              frames_decoded, decoded_frame.width, decoded_frame.height);
-            }
-
-            // Move raw BGRA bytes to shared state for main thread
+            // Store raw BGRA bytes for the main thread
             {
                 std::lock_guard lock(frame_mutex_);
-                latest_bgra_ = std::move(decoded_frame.bgra);  // O(1) move
+                latest_bgra_ = std::move(decoded_frame.bgra);
                 latest_width_ = decoded_frame.width;
                 latest_height_ = decoded_frame.height;
                 has_new_frame_ = true;
             }
         }
 
-        // Periodic stats
-        if (frames_fed % 300 == 0) {
-            Logger::info("Decode stats: fed={}, decoded={}, queue={}",
-                         frames_fed, frames_decoded, frame_queue_->size());
+        // Pipeline metrics every 5 seconds
+        const auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats).count() >= 5) {
+            const auto dropped = frame_queue_->take_drop_count();
+            const auto received = frame_queue_->take_receive_count();
+            Logger::info("Pipeline: recv={} drop={} skip={} decode={} queue={}",
+                         received, dropped, total_skipped, frames_decoded, queue_size);
+            last_stats = now;
         }
     }
 
-    Logger::info("Decode thread stopped (fed={}, decoded={})", frames_fed, frames_decoded);
+    Logger::info("Decode thread stopped (fed={}, decoded={}, skipped={})",
+                 frames_fed, frames_decoded, total_skipped);
 }
 
 // ---------------------------------------------------------------------------
@@ -564,21 +584,17 @@ bool App::start_airplay_service() {
         });
 
     airplay_service_->set_video_frame_callback(
-        [this](const uint8_t* data, size_t size, uint64_t timestamp) {
-            // RAOP thread — copy data into queue for decode thread.
+        [this](const uint8_t* data, size_t size, uint64_t timestamp, uint8_t frame_type) {
+            // RAOP thread — copy data into IDR-aware queue for decode thread.
             static uint64_t cb_count = 0;
             ++cb_count;
 
             if (cb_count == 1) {
-                Logger::info("App: first video frame callback — size={}, ts={}", size, timestamp);
-            }
-            if (cb_count % 300 == 0) {
-                const auto queue_sz = frame_queue_ ? frame_queue_->size() : 0;
-                Logger::info("App: video callback #{}, queue_size={}", cb_count, queue_sz);
+                Logger::info("App: first video frame — size={}, type={}", size, frame_type);
             }
 
             if (frame_queue_) {
-                frame_queue_->push(data, size, timestamp);
+                frame_queue_->push(data, size, timestamp, frame_type);
             }
         });
 
