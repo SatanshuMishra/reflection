@@ -367,11 +367,12 @@ void App::cleanup_mirror_session() {
 }
 
 void App::on_render_timer() {
-    // LIGHTWEIGHT: This runs on the main thread and must complete in <5ms
-    // to keep the window responsive. All heavy work (decode, NV12→BGRA)
-    // happens on the background decode thread.
-
+    // LIGHTWEIGHT: runs on main thread, must complete in <5ms.
     if (!mirror_window_ || !mirror_window_->renderer()) return;
+
+    static uint64_t timer_ticks = 0;
+    static uint64_t frames_rendered = 0;
+    ++timer_ticks;
 
     // Grab the latest decoded frame from the decode thread
     Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
@@ -381,7 +382,7 @@ void App::on_render_timer() {
     {
         std::lock_guard lock(frame_mutex_);
         if (has_new_frame_) {
-            texture = latest_frame_;  // AddRef — safe to use on main thread
+            texture = latest_frame_;
             width = latest_frame_width_;
             height = latest_frame_height_;
             has_frame = true;
@@ -390,13 +391,17 @@ void App::on_render_timer() {
     }
 
     if (has_frame && texture) {
-        // Fast GPU render: upload texture + draw fullscreen triangle (~3ms)
+        ++frames_rendered;
         mirror_window_->renderer()->render_video_frame(
             texture.Get(), width, height);
+
+        // Log periodically
+        if (frames_rendered % 30 == 0) {
+            Logger::debug("Render: displayed frame #{} (timer ticks={})",
+                          frames_rendered, timer_ticks);
+        }
         return;
     }
-
-    // No new frame — don't re-Present (previous frame is still displayed)
 }
 
 void App::decode_loop(std::stop_token stop_token) {
@@ -404,6 +409,8 @@ void App::decode_loop(std::stop_token stop_token) {
 
     uint64_t frames_fed = 0;
     uint64_t frames_decoded = 0;
+    uint64_t empty_polls = 0;
+    auto last_activity = std::chrono::steady_clock::now();
 
     while (!stop_token.stop_requested()) {
         if (!frame_queue_ || !decoder_ || !decoder_->is_initialized()) {
@@ -413,12 +420,28 @@ void App::decode_loop(std::stop_token stop_token) {
 
         OwnedVideoFrame frame;
         if (!frame_queue_->try_pop(frame)) {
-            // No frame available — yield briefly
+            ++empty_polls;
+            // Log if we haven't received frames for a while
+            if (empty_polls == 500) {  // ~1 second at 2ms sleep
+                const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - last_activity).count();
+                Logger::warn("Decode thread: no frames for ~1s (fed={}, decoded={}, "
+                             "elapsed={}s, queue_size={})",
+                             frames_fed, frames_decoded, elapsed, frame_queue_->size());
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
             continue;
         }
 
+        empty_polls = 0;
+        last_activity = std::chrono::steady_clock::now();
         ++frames_fed;
+
+        // Log every 30th frame fed (roughly 1/sec at 30fps)
+        if (frames_fed <= 5 || frames_fed % 30 == 0) {
+            Logger::debug("Decode: feeding frame #{}, size={}, ts={}",
+                          frames_fed, frame.data.size(), frame.timestamp);
+        }
 
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
         const bool decoded = decoder_->decode(
@@ -438,7 +461,13 @@ void App::decode_loop(std::stop_token stop_token) {
                              desc.Width, desc.Height, frames_fed);
             }
 
-            // Store for the main thread's render timer to pick up
+            // Log decoded frames periodically
+            if (frames_decoded % 30 == 0) {
+                Logger::debug("Decode: produced frame #{} ({}x{})",
+                              frames_decoded, desc.Width, desc.Height);
+            }
+
+            // Store for the main thread's render timer
             {
                 std::lock_guard lock(frame_mutex_);
                 latest_frame_ = std::move(texture);
@@ -538,11 +567,16 @@ bool App::start_airplay_service() {
 
     airplay_service_->set_video_frame_callback(
         [this](const uint8_t* data, size_t size, uint64_t timestamp) {
-            // RAOP thread — copy data into queue for main thread consumption.
-            static bool first_cb = true;
-            if (first_cb) {
-                first_cb = false;
+            // RAOP thread — copy data into queue for decode thread.
+            static uint64_t cb_count = 0;
+            ++cb_count;
+
+            if (cb_count == 1) {
                 Logger::info("App: first video frame callback — size={}, ts={}", size, timestamp);
+            }
+            if (cb_count % 300 == 0) {
+                const auto queue_sz = frame_queue_ ? frame_queue_->size() : 0;
+                Logger::info("App: video callback #{}, queue_size={}", cb_count, queue_sz);
             }
 
             if (frame_queue_) {
