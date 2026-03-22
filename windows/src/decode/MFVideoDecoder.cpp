@@ -316,37 +316,30 @@ bool MFVideoDecoder::extract_texture_from_sample(
     hr = MFGetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE, &width, &height);
     if (FAILED(hr) || width == 0 || height == 0) return false;
 
-    // Get raw pixel data from the MF buffer.
-    // For IMFMediaBuffer::Lock(), NV12 data is CONTIGUOUS in memory:
-    //   Y plane: stride * height bytes
-    //   UV plane: stride * (height/2) bytes
-    // This is different from D3D11 NV12 textures which use separate subresources.
+    // Get raw pixel data via IMFMediaBuffer::Lock().
+    // For NV12, Lock() returns CONTIGUOUS memory: Y plane followed by UV plane.
+    // We intentionally avoid IMF2DBuffer::Lock2D() for NV12 because Lock2D
+    // on multiplanar formats may only return the Y plane or use a different
+    // internal stride that doesn't match the contiguous NV12 layout.
     BYTE* raw_data = nullptr;
+    DWORD max_len = 0, cur_len = 0;
+    hr = buffer->Lock(&raw_data, &max_len, &cur_len);
+    if (FAILED(hr) || !raw_data) return false;
+
+    // Determine stride: for NV12, stride = width (1 byte per Y pixel).
+    // For BGRA, stride = width * 4.
     LONG stride = output_stride_;
-
-    // Prefer IMF2DBuffer for correct stride
-    Microsoft::WRL::ComPtr<IMF2DBuffer> buffer_2d;
-    bool locked_2d = false;
-    if (SUCCEEDED(buffer.As(&buffer_2d))) {
-        BYTE* scanline = nullptr;
-        LONG pitch = 0;
-        if (SUCCEEDED(buffer_2d->Lock2D(&scanline, &pitch))) {
-            raw_data = scanline;
-            stride = (pitch < 0) ? -pitch : pitch;
-            locked_2d = true;
-        }
-    }
-
-    if (!locked_2d) {
-        DWORD max_len = 0, cur_len = 0;
-        hr = buffer->Lock(&raw_data, &max_len, &cur_len);
-        if (FAILED(hr) || !raw_data) return false;
-    }
-
     if (stride <= 0) {
-        stride = (output_dxgi_format_ == DXGI_FORMAT_B8G8R8A8_UNORM)
-            ? static_cast<LONG>(width * 4)
-            : static_cast<LONG>(width);
+        stride = static_cast<LONG>(width);
+    }
+
+    // Log stride once for diagnostics
+    static bool stride_logged = false;
+    if (!stride_logged) {
+        stride_logged = true;
+        Logger::info("Decode buffer: {}x{}, stride={}, buffer_size={}, format={}",
+                     width, height, stride, cur_len,
+                     (output_dxgi_format_ == DXGI_FORMAT_NV12) ? "NV12" : "BGRA");
     }
 
     // If the output is NV12, convert to BGRA in CPU.
@@ -385,8 +378,7 @@ bool MFVideoDecoder::extract_texture_from_sample(
         }
 
         // Unlock source buffer
-        if (locked_2d) buffer_2d->Unlock2D();
-        else buffer->Unlock();
+        buffer->Unlock();
 
         // Create BGRA texture
         D3D11_TEXTURE2D_DESC desc{};
@@ -431,8 +423,7 @@ bool MFVideoDecoder::extract_texture_from_sample(
 
     hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
 
-    if (locked_2d) buffer_2d->Unlock2D();
-    else buffer->Unlock();
+    buffer->Unlock();
 
     if (FAILED(hr)) {
         Logger::error("CreateTexture2D failed: 0x{:08X} ({}x{}, fmt={})",
