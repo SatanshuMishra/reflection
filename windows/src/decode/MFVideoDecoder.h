@@ -12,15 +12,15 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <vector>
 
 namespace reflection {
 
 /// Media Foundation H.264 decoder.
 ///
-/// Decodes raw H.264 NAL units (Annex B) and produces BGRA ID3D11Texture2D
-/// frames ready for direct rendering. The MFT is configured to output RGB32
-/// (MFVideoFormat_RGB32 = DXGI_FORMAT_B8G8R8A8_UNORM), which eliminates all
-/// NV12 multiplanar format handling.
+/// Decodes raw H.264 NAL units (Annex B) and produces BGRA textures with
+/// pre-created SRVs ready for immediate rendering. Reuses internal buffers
+/// across frames to minimize per-frame allocation overhead.
 class MFVideoDecoder {
 public:
     MFVideoDecoder();
@@ -31,42 +31,46 @@ public:
 
     [[nodiscard]] bool init(ID3D11Device* device);
 
+    /// Decode an H.264 NAL unit. Returns true if a decoded frame is available.
+    /// Both out_texture and out_srv are set on success, ready for rendering.
     [[nodiscard]] bool decode(
         const uint8_t* data, size_t size, uint64_t timestamp,
-        Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv);
 
     void flush();
     void shutdown();
 
     [[nodiscard]] bool is_initialized() const { return initialized_; }
 
-    /// The DXGI format of decoded output textures.
-    [[nodiscard]] DXGI_FORMAT output_dxgi_format() const { return output_dxgi_format_; }
-
 private:
     bool initialized_ = false;
 
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
-    Microsoft::WRL::ComPtr<IMFDXGIDeviceManager> device_manager_;
-    UINT device_manager_token_ = 0;
     Microsoft::WRL::ComPtr<IMFTransform> mft_;
 
     bool output_type_set_ = false;
-    GUID output_mf_format_{};              // MFVideoFormat_RGB32, etc.
+    GUID output_mf_format_{};
     DXGI_FORMAT output_dxgi_format_ = DXGI_FORMAT_UNKNOWN;
     LONG output_stride_ = 0;
     bool first_frame_logged_ = false;
+
+    // Persistent BGRA conversion buffer — reused across frames to avoid
+    // 5.1MB heap allocation per frame (~2ms savings).
+    std::vector<uint8_t> bgra_buffer_;
 
     [[nodiscard]] bool create_decoder_mft();
     [[nodiscard]] bool set_input_type();
     [[nodiscard]] bool negotiate_output_type();
 
     [[nodiscard]] bool try_get_output_frame(
-        Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv);
 
     [[nodiscard]] bool extract_texture_from_sample(
         IMFSample* sample,
-        Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture);
+        Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv);
 };
 
 } // namespace reflection

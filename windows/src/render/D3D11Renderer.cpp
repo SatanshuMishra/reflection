@@ -133,43 +133,6 @@ bool D3D11Renderer::init_video_pipeline() {
     return true;
 }
 
-bool D3D11Renderer::ensure_staging(int width, int height, DXGI_FORMAT format) {
-    if (staging_ && staging_width_ == width && staging_height_ == height) {
-        return true;
-    }
-
-    staging_srv_.Reset();
-    staging_.Reset();
-
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = static_cast<UINT>(width);
-    desc.Height = static_cast<UINT>(height);
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = format;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-    HRESULT hr = device_->CreateTexture2D(&desc, nullptr, staging_.GetAddressOf());
-    if (FAILED(hr)) {
-        Logger::error("Failed to create staging texture: 0x{:08X}", hr);
-        return false;
-    }
-
-    hr = device_->CreateShaderResourceView(staging_.Get(), nullptr, staging_srv_.GetAddressOf());
-    if (FAILED(hr)) {
-        Logger::error("Failed to create staging SRV: 0x{:08X}", hr);
-        staging_.Reset();
-        return false;
-    }
-
-    staging_width_ = width;
-    staging_height_ = height;
-    Logger::info("Staging texture created: {}x{}", width, height);
-    return true;
-}
-
 void D3D11Renderer::set_letterbox_viewport(int video_width, int video_height) {
     if (window_width_ <= 0 || window_height_ <= 0) return;
     if (video_width <= 0 || video_height <= 0) return;
@@ -231,51 +194,13 @@ void D3D11Renderer::render_frame() {
 }
 
 void D3D11Renderer::render_video_frame(
-    ID3D11Texture2D* texture, int video_width, int video_height
+    ID3D11Texture2D* texture, ID3D11ShaderResourceView* srv,
+    int video_width, int video_height
 ) {
-    if (!initialized_ || !render_target_ || !texture) return;
+    if (!initialized_ || !render_target_ || !texture || !srv) return;
     if (!video_vs_ || !video_ps_ || !sampler_) return;
 
-    // Determine which SRV to use
-    ID3D11ShaderResourceView* srv = nullptr;
-
-    D3D11_TEXTURE2D_DESC src_desc{};
-    texture->GetDesc(&src_desc);
-
-    if (src_desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
-        // Texture already has BIND_SHADER_RESOURCE — create SRV directly
-        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> direct_srv;
-        HRESULT hr = device_->CreateShaderResourceView(texture, nullptr, direct_srv.GetAddressOf());
-        if (SUCCEEDED(hr)) {
-            // Use temporary SRV — render immediately
-            context_->OMSetRenderTargets(1, render_target_.GetAddressOf(), nullptr);
-            context_->ClearRenderTargetView(render_target_.Get(), constants::kBgClearColor);
-            set_letterbox_viewport(video_width, video_height);
-
-            context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            context_->IASetInputLayout(nullptr);
-            context_->VSSetShader(video_vs_.Get(), nullptr, 0);
-            context_->PSSetShader(video_ps_.Get(), nullptr, 0);
-            context_->PSSetShaderResources(0, 1, direct_srv.GetAddressOf());
-            context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
-            context_->Draw(3, 0);
-
-            ID3D11ShaderResourceView* null_srv = nullptr;
-            context_->PSSetShaderResources(0, 1, &null_srv);
-            swap_chain_->Present(0, 0);
-            return;
-        }
-    }
-
-    // Texture lacks BIND_SHADER_RESOURCE — copy to staging
-    if (!ensure_staging(video_width, video_height, src_desc.Format)) {
-        render_frame();
-        return;
-    }
-
-    context_->CopyResource(staging_.Get(), texture);
-
-    // Render using staging SRV
+    // Render using the pre-created SRV (no per-frame SRV creation needed)
     context_->OMSetRenderTargets(1, render_target_.GetAddressOf(), nullptr);
     context_->ClearRenderTargetView(render_target_.Get(), constants::kBgClearColor);
     set_letterbox_viewport(video_width, video_height);
@@ -284,7 +209,7 @@ void D3D11Renderer::render_video_frame(
     context_->IASetInputLayout(nullptr);
     context_->VSSetShader(video_vs_.Get(), nullptr, 0);
     context_->PSSetShader(video_ps_.Get(), nullptr, 0);
-    context_->PSSetShaderResources(0, 1, staging_srv_.GetAddressOf());
+    context_->PSSetShaderResources(0, 1, &srv);
     context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
     context_->Draw(3, 0);
 
@@ -297,8 +222,6 @@ void D3D11Renderer::shutdown() {
     if (!initialized_) return;
     Logger::info("Shutting down D3D11 renderer");
 
-    staging_srv_.Reset();
-    staging_.Reset();
     sampler_.Reset();
     video_ps_.Reset();
     video_vs_.Reset();
@@ -307,7 +230,6 @@ void D3D11Renderer::shutdown() {
     context_.Reset();
     device_.Reset();
 
-    staging_width_ = staging_height_ = 0;
     window_width_ = window_height_ = 0;
     initialized_ = false;
 }

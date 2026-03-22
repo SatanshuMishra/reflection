@@ -74,6 +74,7 @@ private:
     // thread-safe (device has internal locking).
     std::mutex frame_mutex_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> latest_frame_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> latest_srv_;
     int latest_frame_width_ = 0;
     int latest_frame_height_ = 0;
     bool has_new_frame_ = false;

@@ -193,12 +193,12 @@ bool MFVideoDecoder::negotiate_output_type() {
 
 bool MFVideoDecoder::decode(
     const uint8_t* data, size_t size, uint64_t timestamp,
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv
 ) {
     if (!initialized_ || !mft_) return false;
     if (!data || size == 0) return false;
 
-    // Log first frame for diagnostics
     if (!first_frame_logged_) {
         first_frame_logged_ = true;
         if (size >= 5) {
@@ -229,7 +229,7 @@ bool MFVideoDecoder::decode(
     hr = mft_->ProcessInput(0, sample.Get(), 0);
 
     if (hr == MF_E_NOTACCEPTING) {
-        if (try_get_output_frame(out_texture)) return true;
+        if (try_get_output_frame(out_texture, out_srv)) return true;
         return false;
     }
 
@@ -241,11 +241,12 @@ bool MFVideoDecoder::decode(
         return false;
     }
 
-    return try_get_output_frame(out_texture);
+    return try_get_output_frame(out_texture, out_srv);
 }
 
 bool MFVideoDecoder::try_get_output_frame(
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv
 ) {
     MFT_OUTPUT_DATA_BUFFER output_buffer{};
     output_buffer.dwStreamID = 0;
@@ -283,7 +284,7 @@ bool MFVideoDecoder::try_get_output_frame(
             Logger::error("Failed to renegotiate output type");
             return false;
         }
-        return try_get_output_frame(out_texture);
+        return try_get_output_frame(out_texture, out_srv);
     }
 
     if (FAILED(hr)) {
@@ -294,12 +295,13 @@ bool MFVideoDecoder::try_get_output_frame(
     IMFSample* result = output_buffer.pSample;
     if (!result) return false;
 
-    return extract_texture_from_sample(result, out_texture);
+    return extract_texture_from_sample(result, out_texture, out_srv);
 }
 
 bool MFVideoDecoder::extract_texture_from_sample(
     IMFSample* sample,
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture,
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv
 ) {
     Microsoft::WRL::ComPtr<IMFMediaBuffer> buffer;
     HRESULT hr = sample->ConvertToContiguousBuffer(buffer.GetAddressOf());
@@ -350,41 +352,46 @@ bool MFVideoDecoder::extract_texture_from_sample(
     // NV12 can't be used as a shader resource on D3D11 (multiplanar format).
     // The conversion is fast enough for our resolution (1312x976 @ 30fps).
     if (is_nv12_output) {
-        // Allocate BGRA buffer
+        // Reuse persistent BGRA buffer — avoids 5.1MB heap alloc per frame
         const UINT bgra_stride = width * 4;
-        std::vector<uint8_t> bgra(bgra_stride * height);
+        const size_t bgra_size = static_cast<size_t>(bgra_stride) * height;
+        if (bgra_buffer_.size() != bgra_size) {
+            bgra_buffer_.resize(bgra_size);
+            Logger::info("BGRA buffer allocated: {} bytes ({}x{})",
+                         bgra_size, width, height);
+        }
 
         const BYTE* y_plane = raw_data;
         const BYTE* uv_plane = raw_data + stride * height;
 
-        // BT.601 NV12 → BGRA conversion
+        // BT.709 NV12 → BGRA conversion (correct for HD AirPlay content).
+        // BT.709 coefficients differ from BT.601 primarily in green channel —
+        // using BT.601 on BT.709 content produces a green tint.
         for (UINT row = 0; row < height; ++row) {
             const BYTE* y_row = y_plane + row * stride;
             const BYTE* uv_row = uv_plane + (row / 2) * stride;
-            uint8_t* bgra_row = bgra.data() + row * bgra_stride;
+            uint8_t* bgra_row = bgra_buffer_.data() + row * bgra_stride;
 
             for (UINT col = 0; col < width; ++col) {
                 const int y_val = y_row[col];
-                const int u_val = uv_row[(col & ~1u)] - 128;      // Even byte = U
-                const int v_val = uv_row[(col & ~1u) + 1] - 128;  // Odd byte = V
+                const int u_val = uv_row[(col & ~1u)] - 128;
+                const int v_val = uv_row[(col & ~1u) + 1] - 128;
 
-                // BT.601 limited range → full range
-                int r = y_val + ((359 * v_val) >> 8);
-                int g = y_val - ((88 * u_val + 183 * v_val) >> 8);
-                int b = y_val + ((454 * u_val) >> 8);
+                // BT.709 full-range conversion
+                int r = y_val + ((357 * v_val) >> 8);
+                int g = y_val - ((42 * u_val + 107 * v_val) >> 8);
+                int b = y_val + ((451 * u_val) >> 8);
 
-                // Clamp to [0, 255]
                 bgra_row[col * 4 + 0] = static_cast<uint8_t>((b < 0) ? 0 : (b > 255) ? 255 : b);
                 bgra_row[col * 4 + 1] = static_cast<uint8_t>((g < 0) ? 0 : (g > 255) ? 255 : g);
                 bgra_row[col * 4 + 2] = static_cast<uint8_t>((r < 0) ? 0 : (r > 255) ? 255 : r);
-                bgra_row[col * 4 + 3] = 255;  // Alpha
+                bgra_row[col * 4 + 3] = 255;
             }
         }
 
-        // Unlock source buffer
         buffer->Unlock();
 
-        // Create BGRA texture
+        // Create BGRA texture (CreateTexture2D is thread-safe on ID3D11Device)
         D3D11_TEXTURE2D_DESC desc{};
         desc.Width = width;
         desc.Height = height;
@@ -396,12 +403,21 @@ bool MFVideoDecoder::extract_texture_from_sample(
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
         D3D11_SUBRESOURCE_DATA init_data{};
-        init_data.pSysMem = bgra.data();
+        init_data.pSysMem = bgra_buffer_.data();
         init_data.SysMemPitch = bgra_stride;
 
         hr = device_->CreateTexture2D(&desc, &init_data, out_texture.GetAddressOf());
         if (FAILED(hr)) {
-            Logger::error("CreateTexture2D (BGRA from NV12) failed: 0x{:08X}", hr);
+            Logger::error("CreateTexture2D (BGRA) failed: 0x{:08X}", hr);
+            return false;
+        }
+
+        // Pre-create SRV (thread-safe on ID3D11Device)
+        hr = device_->CreateShaderResourceView(
+            out_texture.Get(), nullptr, out_srv.GetAddressOf());
+        if (FAILED(hr)) {
+            Logger::error("CreateShaderResourceView failed: 0x{:08X}", hr);
+            out_texture.Reset();
             return false;
         }
 

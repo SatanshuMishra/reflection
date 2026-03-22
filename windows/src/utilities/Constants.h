@@ -140,6 +140,6 @@ constexpr uint32_t kWmMirrorWindowClosed = 0x8000 + 4;   // WM_APP + 4
 // Render Timer
 // --------------------------------------------------------------------------
 constexpr uintptr_t kRenderTimerId = 1;
-constexpr uint32_t kRenderTimerIntervalMs = 33;  // ~30fps (matches AirPlay input rate)
+constexpr uint32_t kRenderTimerIntervalMs = 16;  // ~60fps polling (renders only when new frame available)
 
 } // namespace reflection::constants
