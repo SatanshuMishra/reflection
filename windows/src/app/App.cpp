@@ -366,7 +366,7 @@ void App::on_render_timer() {
     // ~10-30ms. We must leave enough time for the Win32 message pump to
     // process WM_PAINT, mouse events, etc., or Windows marks the window
     // "Not Responding" after 5 seconds of unresponsiveness.
-    constexpr int kMaxFramesPerTick = 2;
+    constexpr int kMaxFramesPerTick = 1;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> last_texture;
     int last_width = 0;
