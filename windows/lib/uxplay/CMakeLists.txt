@@ -154,14 +154,31 @@ if(PLIST_INCLUDE_DIR)
 endif()
 
 # pthreads — UxPlay uses pthreads exclusively (no Windows threads path).
-# On MSYS2/MinGW, winpthreads provides POSIX pthreads compatibility.
-find_package(Threads REQUIRED)
+# On MSVC: requires pthreads4w (vcpkg install pthreads:x64-windows)
+# On MinGW: winpthreads provides POSIX pthreads compatibility.
+if(MSVC)
+    # pthreads4w for MSVC — provides <pthread.h> and pthreadVC3.lib
+    find_path(PTHREADS_INCLUDE_DIR NAMES pthread.h)
+    find_library(PTHREADS_LIBRARY NAMES pthreadVC3 pthreadVC2 pthreadVCE3 pthreads)
+    if(NOT PTHREADS_INCLUDE_DIR OR NOT PTHREADS_LIBRARY)
+        message(FATAL_ERROR
+            "pthreads not found for MSVC. Install via:\n"
+            "  vcpkg install pthreads:x64-windows\n"
+            "UxPlay requires POSIX pthreads for threading."
+        )
+    endif()
+    message(STATUS "Found pthreads4w: ${PTHREADS_LIBRARY}")
+    target_include_directories(uxplay_core PRIVATE ${PTHREADS_INCLUDE_DIR})
+    target_link_libraries(uxplay_core PRIVATE ${PTHREADS_LIBRARY})
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(uxplay_core PRIVATE Threads::Threads)
+endif()
 
 target_link_libraries(uxplay_core
     PRIVATE
         OpenSSL::SSL
         OpenSSL::Crypto
-        Threads::Threads
         ws2_32
         winmm       # timeGetTime()
 )
@@ -210,8 +227,11 @@ target_compile_definitions(uxplay_core PRIVATE
 )
 
 if(MSVC)
-    # Force-include Windows compatibility header before all UxPlay sources.
+    # Force-include pthread.h (from pthreads4w) before all UxPlay sources.
+    # UxPlay's threads.h uses pthread_t, pthread_mutex_t, pthread_cond_t
+    # which must be available before any UxPlay header is processed.
     target_compile_options(uxplay_core PRIVATE
+        /FI"pthread.h"
         /FI${COMPAT_DIR}/win_compat_pre.h
         /W3
         /wd4005   # macro redefinition
