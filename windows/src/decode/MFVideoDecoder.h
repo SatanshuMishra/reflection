@@ -12,7 +12,6 @@
 #include <wrl/client.h>
 
 #include <cstdint>
-#include <vector>
 
 namespace reflection {
 
@@ -55,9 +54,6 @@ private:
     LONG output_stride_ = 0;
     bool first_frame_logged_ = false;
 
-    // Persistent BGRA conversion buffer — reused across frames to avoid
-    // 5.1MB heap allocation per frame (~2ms savings).
-    std::vector<uint8_t> bgra_buffer_;
 
     [[nodiscard]] bool create_decoder_mft();
     [[nodiscard]] bool set_input_type();
