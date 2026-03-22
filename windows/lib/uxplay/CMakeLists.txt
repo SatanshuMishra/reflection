@@ -229,5 +229,23 @@ if(MSVC)
         /wd4146   # unary minus applied to unsigned type
     )
 else()
-    target_compile_options(uxplay_core PRIVATE -w)
+    # MinGW/GCC path
+    target_compile_options(uxplay_core PRIVATE
+        -w               # Suppress all warnings for third-party code
+        -pthread          # Ensure pthread headers and linking are available
+    )
+
+    # Check if <pthread.h> is available. GCC 15+ on UCRT64 may use MCF
+    # threading by default, which doesn't include POSIX pthread headers.
+    # In that case, the user needs: pacman -S mingw-w64-ucrt-x86_64-winpthreads-git
+    include(CheckIncludeFile)
+    check_include_file("pthread.h" HAVE_PTHREAD_H)
+    if(NOT HAVE_PTHREAD_H)
+        message(FATAL_ERROR
+            "<pthread.h> not found! UxPlay requires POSIX pthreads.\n"
+            "Your MinGW GCC may use MCF threading without pthread headers.\n"
+            "Fix: pacman -S mingw-w64-ucrt-x86_64-winpthreads-git\n"
+            "Then delete build dir and re-run cmake."
+        )
+    endif()
 endif()
