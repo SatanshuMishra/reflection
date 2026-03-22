@@ -6,6 +6,7 @@
     "openssl",
     "libplist",
     "fdk-aac",
-    "gtest"
+    "gtest",
+    "pthreads"
   ]
 }
