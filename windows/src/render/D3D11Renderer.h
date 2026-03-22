@@ -9,6 +9,8 @@
 #include <dxgi.h>
 #include <wrl/client.h>
 
+#include <cstdint>
+
 namespace reflection {
 
 /// Direct3D 11 renderer for displaying decoded video frames.
