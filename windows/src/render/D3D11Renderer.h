@@ -30,9 +30,9 @@ public:
     /// Render a blank frame (background color only).
     void render_frame();
 
-    /// Render a decoded BGRA video frame with a pre-created SRV.
-    void render_video_frame(ID3D11Texture2D* texture,
-                            ID3D11ShaderResourceView* srv,
+    /// Render a BGRA video frame from raw CPU pixel data.
+    /// Creates the texture on the main thread for GPU driver compatibility.
+    void render_video_frame(const uint8_t* bgra_data, int bgra_stride,
                             int video_width, int video_height);
 
     void shutdown();

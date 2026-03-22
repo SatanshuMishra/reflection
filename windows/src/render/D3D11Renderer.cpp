@@ -194,13 +194,40 @@ void D3D11Renderer::render_frame() {
 }
 
 void D3D11Renderer::render_video_frame(
-    ID3D11Texture2D* texture, ID3D11ShaderResourceView* srv,
+    const uint8_t* bgra_data, int bgra_stride,
     int video_width, int video_height
 ) {
-    if (!initialized_ || !render_target_ || !texture || !srv) return;
+    if (!initialized_ || !render_target_ || !bgra_data) return;
     if (!video_vs_ || !video_ps_ || !sampler_) return;
+    if (video_width <= 0 || video_height <= 0) return;
 
-    // Render using the pre-created SRV (no per-frame SRV creation needed)
+    // Create texture from raw BGRA bytes ON THE MAIN THREAD.
+    // This ensures the D3D11 immediate context is used consistently
+    // from the same thread, avoiding GPU driver issues with deferred
+    // pSysMem copies on virtual GPUs (e.g., Hyper-V).
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(video_width);
+    desc.Height = static_cast<UINT>(video_height);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;  // Data will not change
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init_data{};
+    init_data.pSysMem = bgra_data;
+    init_data.SysMemPitch = static_cast<UINT>(bgra_stride);
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    HRESULT hr = device_->CreateTexture2D(&desc, &init_data, texture.GetAddressOf());
+    if (FAILED(hr)) return;
+
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+    hr = device_->CreateShaderResourceView(texture.Get(), nullptr, srv.GetAddressOf());
+    if (FAILED(hr)) return;
+
+    // Render
     context_->OMSetRenderTargets(1, render_target_.GetAddressOf(), nullptr);
     context_->ClearRenderTargetView(render_target_.Get(), constants::kBgClearColor);
     set_letterbox_viewport(video_width, video_height);
@@ -209,7 +236,7 @@ void D3D11Renderer::render_video_frame(
     context_->IASetInputLayout(nullptr);
     context_->VSSetShader(video_vs_.Get(), nullptr, 0);
     context_->PSSetShader(video_ps_.Get(), nullptr, 0);
-    context_->PSSetShaderResources(0, 1, &srv);
+    context_->PSSetShaderResources(0, 1, srv.GetAddressOf());
     context_->PSSetSamplers(0, 1, sampler_.GetAddressOf());
     context_->Draw(3, 0);
 
