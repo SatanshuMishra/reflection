@@ -69,6 +69,22 @@ if(NOT uxplay_POPULATED)
         file(WRITE "${_rbuf_file}" "${_rbuf_content}")
         message(STATUS "Patched raop_buffer.c: VLA → _alloca() for MSVC")
     endif()
+
+    # Patch compat.h — add <pthread.h> to the Windows path.
+    # UxPlay's compat.h includes <pthread.h> only on Unix (#else branch).
+    # On Windows, threads.h needs pthread_t, pthread_mutex_t, pthread_cond_t
+    # which are provided by MinGW's winpthreads but not auto-included.
+    set(_compat_file "${_uxplay_lib_dir}/compat.h")
+    if(EXISTS "${_compat_file}")
+        file(READ "${_compat_file}" _compat_content)
+        string(REPLACE
+            "#include <windows.h>"
+            "#include <windows.h>\n#include <pthread.h>"
+            _compat_content "${_compat_content}"
+        )
+        file(WRITE "${_compat_file}" "${_compat_content}")
+        message(STATUS "Patched compat.h: added <pthread.h> to Windows path")
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
