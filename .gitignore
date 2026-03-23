@@ -28,6 +28,7 @@ Package.resolved
 
 # Build artifacts
 build/
+build-uxplay/
 
 # Editor and tool configuration (local state only)
 .claude/
