@@ -5,12 +5,12 @@
 #include <atomic>
 #include <mutex>
 
-// Forward declare UxPlay's opaque types
+// UxPlay C types — stream.h defines video_decode_struct / audio_decode_struct
+// as anonymous struct typedefs, so forward declaration is not possible.
 extern "C" {
     typedef struct raop_s raop_t;
     typedef struct raop_ntp_s raop_ntp_t;
-    typedef struct video_decode_struct video_decode_struct;
-    typedef struct audio_decode_struct audio_decode_struct;
+#include "stream.h"
 }
 
 namespace reflection {
@@ -48,6 +48,7 @@ public:
     void set_audio_callback(AudioFrameCallback callback) override;
     void set_connection_callback(ConnectionCallback callback) override;
     void set_disconnection_callback(DisconnectionCallback callback) override;
+    [[nodiscard]] std::string get_public_key() const override;
 
 private:
     raop_t* raop_ = nullptr;

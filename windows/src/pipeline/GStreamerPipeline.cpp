@@ -35,7 +35,7 @@ bool GStreamerPipeline::init(HWND window_handle) {
         return false;
     }
 
-    // Build audio pipeline (optional — don't fail if unavailable)
+    // Audio in a SEPARATE pipeline — prevents audio preroll from blocking video.
     if (!build_audio_pipeline()) {
         Logger::warn("Audio pipeline not available — video only");
     }
@@ -64,15 +64,16 @@ bool GStreamerPipeline::build_video_pipeline() {
         return false;
     }
 
-    // Configure appsrc
+    // Configure appsrc for live H.264 streaming
     g_object_set(video_appsrc_,
         "stream-type", 0,  // GST_APP_STREAM_TYPE_STREAM
         "format", GST_FORMAT_TIME,
         "is-live", TRUE,
-        "max-bytes", static_cast<guint64>(1024 * 1024),  // 1MB buffer
+        "do-timestamp", TRUE,
+        "max-bytes", static_cast<guint64>(4 * 1024 * 1024),
         nullptr);
 
-    // Set caps for H.264 byte-stream
+    // H.264 Annex B byte stream with AU alignment
     GstCaps* video_caps = gst_caps_new_simple("video/x-h264",
         "stream-format", G_TYPE_STRING, "byte-stream",
         "alignment", G_TYPE_STRING, "au",
@@ -87,28 +88,26 @@ bool GStreamerPipeline::build_video_pipeline() {
         return false;
     }
 
-    // Create decoder (hardware or software)
+    // Create decoder — use software for reliability testing
     GstElement* decoder = nullptr;
     if (has_hw_decoder_) {
         decoder = gst_element_factory_make("d3d11h264dec", "video-decoder");
-        if (!decoder) {
-            Logger::warn("d3d11h264dec creation failed despite probe — falling back to software");
-            has_hw_decoder_ = false;
-        }
     }
     if (!decoder) {
         decoder = gst_element_factory_make("avdec_h264", "video-decoder");
-        if (!decoder) {
-            Logger::error("Failed to create any H.264 decoder (tried d3d11h264dec and avdec_h264)");
-            return false;
-        }
+        has_hw_decoder_ = false;
+    }
+    if (!decoder) {
+        Logger::error("Failed to create any H.264 decoder");
+        return false;
     }
 
-    // Create video sink (d3d11videosink for Windows)
+    // Video convert (needed for SW decode → d3d11videosink format conversion)
+    GstElement* videoconvert = gst_element_factory_make("videoconvert", "video-convert");
+
+    // Create video sink
     video_sink_ = gst_element_factory_make("d3d11videosink", "video-sink");
     if (!video_sink_) {
-        // Fallback to auto video sink
-        Logger::warn("d3d11videosink not available — trying autovideosink");
         video_sink_ = gst_element_factory_make("autovideosink", "video-sink");
     }
     if (!video_sink_) {
@@ -116,37 +115,10 @@ bool GStreamerPipeline::build_video_pipeline() {
         return false;
     }
 
-    // Configure video sink
-    g_object_set(video_sink_, "sync", FALSE, nullptr);  // Low-latency: don't sync to clock
+    // Low-latency: don't sync to pipeline clock
+    g_object_set(video_sink_, "sync", FALSE, nullptr);
 
-    if (has_hw_decoder_) {
-        // Hardware path: appsrc → h264parse → d3d11h264dec → d3d11videosink
-        // Zero-copy: decoded NV12 stays on GPU, d3d11videosink renders directly
-        gst_bin_add_many(GST_BIN(pipeline_),
-            video_appsrc_, h264parse, decoder, video_sink_, nullptr);
-
-        if (!gst_element_link_many(video_appsrc_, h264parse, decoder, video_sink_, nullptr)) {
-            Logger::error("Failed to link hardware video pipeline");
-            return false;
-        }
-    } else {
-        // Software path: appsrc → h264parse → avdec_h264 → videoconvert → d3d11videosink
-        GstElement* videoconvert = gst_element_factory_make("videoconvert", "video-convert");
-        if (!videoconvert) {
-            Logger::error("Failed to create videoconvert element");
-            return false;
-        }
-
-        gst_bin_add_many(GST_BIN(pipeline_),
-            video_appsrc_, h264parse, decoder, videoconvert, video_sink_, nullptr);
-
-        if (!gst_element_link_many(video_appsrc_, h264parse, decoder, videoconvert, video_sink_, nullptr)) {
-            Logger::error("Failed to link software video pipeline");
-            return false;
-        }
-    }
-
-    // Set the window handle on the video sink for overlay rendering
+    // Set the window handle for overlay rendering
     if (window_handle_ && GST_IS_VIDEO_OVERLAY(video_sink_)) {
         gst_video_overlay_set_window_handle(
             GST_VIDEO_OVERLAY(video_sink_),
@@ -154,22 +126,47 @@ bool GStreamerPipeline::build_video_pipeline() {
         Logger::info("GStreamer video overlay attached to HWND");
     }
 
-    Logger::info("Video pipeline built: appsrc → h264parse → {} → {}",
-                 has_hw_decoder_ ? "d3d11h264dec" : "avdec_h264 → videoconvert",
-                 "d3d11videosink");
+    // Build pipeline: appsrc → h264parse → decoder → [videoconvert] → sink
+    if (videoconvert) {
+        gst_bin_add_many(GST_BIN(pipeline_),
+            video_appsrc_, h264parse, decoder, videoconvert, video_sink_, nullptr);
+        if (!gst_element_link_many(video_appsrc_, h264parse, decoder, videoconvert, video_sink_, nullptr)) {
+            Logger::error("Failed to link video pipeline (with videoconvert)");
+            return false;
+        }
+    } else {
+        gst_bin_add_many(GST_BIN(pipeline_),
+            video_appsrc_, h264parse, decoder, video_sink_, nullptr);
+        if (!gst_element_link_many(video_appsrc_, h264parse, decoder, video_sink_, nullptr)) {
+            Logger::error("Failed to link video pipeline");
+            return false;
+        }
+    }
+
+    Logger::info("Video pipeline built: appsrc → h264parse → {} → {} → d3d11videosink",
+                 has_hw_decoder_ ? "d3d11h264dec" : "avdec_h264",
+                 videoconvert ? "videoconvert" : "(direct)");
     return true;
 }
 
 bool GStreamerPipeline::build_audio_pipeline() {
-    // Audio pipeline: appsrc → aacparse → avdec_aac → audioconvert → audioresample → wasapisink
-    audio_appsrc_ = gst_element_factory_make("appsrc", "audio-appsrc");
-    if (!audio_appsrc_) return false;
+    // Audio in a SEPARATE GStreamer pipeline to avoid blocking video's
+    // PAUSED→PLAYING transition (audio data arrives later than video).
+    audio_pipeline_ = gst_pipeline_new("reflection-audio-pipeline");
+    if (!audio_pipeline_) return false;
 
-    // Configure audio appsrc
+    audio_appsrc_ = gst_element_factory_make("appsrc", "audio-appsrc");
+    if (!audio_appsrc_) {
+        gst_object_unref(audio_pipeline_);
+        audio_pipeline_ = nullptr;
+        return false;
+    }
+
     g_object_set(audio_appsrc_,
         "stream-type", 0,
         "format", GST_FORMAT_TIME,
         "is-live", TRUE,
+        "do-timestamp", TRUE,
         nullptr);
 
     GstCaps* audio_caps = gst_caps_new_simple("audio/mpeg",
@@ -188,33 +185,40 @@ bool GStreamerPipeline::build_audio_pipeline() {
     GstElement* audiosink = gst_element_factory_make("wasapisink", "audio-sink");
 
     if (!audiosink) {
-        Logger::warn("wasapisink not available — trying autoaudiosink");
         audiosink = gst_element_factory_make("autoaudiosink", "audio-sink");
     }
 
     if (!aacparse || !aacdec || !audioconvert || !audioresample || !audiosink) {
         Logger::warn("Some audio elements not available — audio disabled");
-        // Clean up any that were created
         if (audio_appsrc_) { gst_object_unref(audio_appsrc_); audio_appsrc_ = nullptr; }
         if (aacparse) gst_object_unref(aacparse);
         if (aacdec) gst_object_unref(aacdec);
         if (audioconvert) gst_object_unref(audioconvert);
         if (audioresample) gst_object_unref(audioresample);
         if (audiosink) gst_object_unref(audiosink);
+        gst_object_unref(audio_pipeline_);
+        audio_pipeline_ = nullptr;
         return false;
     }
 
     g_object_set(audiosink, "sync", FALSE, nullptr);
 
-    gst_bin_add_many(GST_BIN(pipeline_),
+    gst_bin_add_many(GST_BIN(audio_pipeline_),
         audio_appsrc_, aacparse, aacdec, audioconvert, audioresample, audiosink, nullptr);
 
     if (!gst_element_link_many(audio_appsrc_, aacparse, aacdec, audioconvert, audioresample, audiosink, nullptr)) {
         Logger::warn("Failed to link audio pipeline — audio disabled");
+        gst_object_unref(audio_pipeline_);
+        audio_pipeline_ = nullptr;
+        audio_appsrc_ = nullptr;
         return false;
     }
 
-    Logger::info("Audio pipeline built: appsrc → aacparse → avdec_aac → wasapisink");
+    // Start the audio pipeline immediately — it'll stay in PAUSED until data arrives,
+    // but won't block the video pipeline.
+    gst_element_set_state(audio_pipeline_, GST_STATE_PLAYING);
+
+    Logger::info("Audio pipeline built (separate): appsrc → aacparse → avdec_aac → wasapisink");
     return true;
 }
 
@@ -232,6 +236,10 @@ void GStreamerPipeline::start() {
 
     Logger::info("Starting GStreamer pipeline");
 
+    // Start GLib main loop FIRST — bus messages need it for dispatch
+    main_loop_ = g_main_loop_new(nullptr, FALSE);
+    gst_thread_ = std::thread(&GStreamerPipeline::run_main_loop, this);
+
     // Transition to PLAYING
     GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_FAILURE) {
@@ -240,11 +248,6 @@ void GStreamerPipeline::start() {
     }
 
     playing_.store(true);
-
-    // Start GLib main loop on dedicated thread for bus message handling
-    main_loop_ = g_main_loop_new(nullptr, FALSE);
-    gst_thread_ = std::thread(&GStreamerPipeline::run_main_loop, this);
-
     Logger::info("GStreamer pipeline started");
 }
 
@@ -276,41 +279,47 @@ void GStreamerPipeline::stop() {
     gst_object_unref(pipeline_);
     pipeline_ = nullptr;
     video_appsrc_ = nullptr;  // Owned by pipeline
-    audio_appsrc_ = nullptr;
     video_sink_ = nullptr;
+
+    // Stop audio pipeline (separate from video)
+    if (audio_pipeline_) {
+        gst_element_set_state(audio_pipeline_, GST_STATE_NULL);
+        gst_object_unref(audio_pipeline_);
+        audio_pipeline_ = nullptr;
+        audio_appsrc_ = nullptr;
+    }
 
     Logger::info("GStreamer pipeline stopped");
 }
 
 void GStreamerPipeline::push_video_data(const uint8_t* data, size_t size,
                                          uint64_t timestamp) {
-    if (!video_appsrc_ || !playing_.load()) return;
+    // Don't gate on playing_ — GStreamer can buffer during PAUSED state.
+    // The first keyframe (SPS+PPS+IDR) arrives before start() completes.
+    if (!video_appsrc_) return;
 
-    // Allocate GstBuffer and copy data (GStreamer takes ownership)
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
     if (!buffer) {
         Logger::warn("Failed to allocate GstBuffer for video frame (size={})", size);
         return;
     }
 
-    // Copy NAL unit data into the buffer
     GstMapInfo map;
     if (gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
         std::memcpy(map.data, data, size);
         gst_buffer_unmap(buffer, &map);
     }
 
-    // Set timestamp (convert NTP microseconds to GStreamer nanoseconds)
-    GST_BUFFER_PTS(buffer) = timestamp * 1000;  // µs → ns
+    // Let appsrc assign timestamps (do-timestamp=TRUE) for live streaming.
+    // Manual NTP timestamps cause pipeline to stall on non-monotonic values.
+    GST_BUFFER_PTS(buffer) = GST_CLOCK_TIME_NONE;
     GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
 
-    // Push to appsrc (thread-safe — GstAppSrc handles locking internally)
     GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(video_appsrc_), buffer);
     if (ret != GST_FLOW_OK) {
-        // Buffer was consumed by push_buffer even on error — don't unref
         static uint64_t error_count = 0;
         if (++error_count % 100 == 1) {
-            Logger::warn("gst_app_src_push_buffer failed: {} (count={})",
+            Logger::warn("gst_app_src_push_buffer failed: ret={} (count={})",
                          static_cast<int>(ret), error_count);
         }
     }
@@ -318,7 +327,7 @@ void GStreamerPipeline::push_video_data(const uint8_t* data, size_t size,
 
 void GStreamerPipeline::push_audio_data(const uint8_t* data, size_t size,
                                          uint64_t timestamp) {
-    if (!audio_appsrc_ || !playing_.load()) return;
+    if (!audio_appsrc_) return;
 
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, size, nullptr);
     if (!buffer) return;
@@ -329,7 +338,7 @@ void GStreamerPipeline::push_audio_data(const uint8_t* data, size_t size,
         gst_buffer_unmap(buffer, &map);
     }
 
-    GST_BUFFER_PTS(buffer) = timestamp * 1000;
+    GST_BUFFER_PTS(buffer) = GST_CLOCK_TIME_NONE;
     GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
 
     gst_app_src_push_buffer(GST_APP_SRC(audio_appsrc_), buffer);

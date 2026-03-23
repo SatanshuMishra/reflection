@@ -42,6 +42,10 @@ public:
 
     /// Set callback for client disconnections.
     virtual void set_disconnection_callback(DisconnectionCallback callback) = 0;
+
+    /// Get the generated public key (hex string) for mDNS TXT records.
+    /// Returns empty string if not yet initialized.
+    [[nodiscard]] virtual std::string get_public_key() const { return ""; }
 };
 
 } // namespace reflection

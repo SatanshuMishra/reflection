@@ -33,16 +33,19 @@ struct MdnsServiceRecord {
     static MdnsServiceRecord make_airplay_record(
         const std::string& server_name,
         uint16_t port,
-        const std::string& hw_addr_hex);
+        const std::string& hw_addr_hex,
+        const std::string& pk_override = "");
 
     /// Create a RAOP service record with standard TXT keys.
     /// @param server_name  The name visible on the iPad
     /// @param port         RAOP (RTSP) port (default 5000)
     /// @param hw_addr_hex  Hardware address as hex string
+    /// @param pk_override  If non-empty, use this as the pk TXT value
     static MdnsServiceRecord make_raop_record(
         const std::string& server_name,
         uint16_t port,
-        const std::string& hw_addr_hex);
+        const std::string& hw_addr_hex,
+        const std::string& pk_override = "");
 };
 
 } // namespace reflection
