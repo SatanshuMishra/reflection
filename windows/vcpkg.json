@@ -2,7 +2,7 @@
   "name": "reflection-windows",
   "version": "1.0.0",
   "description": "AirPlay iPad screen mirroring for Windows",
-  "builtin-baseline": "c82f74667287d3dc386bce81e44964370c91a289",
+  "builtin-baseline": "b472291f295551b7127359ea38fdd2ca092f6f1b",
   "dependencies": [
     "openssl",
     "libplist",

@@ -23,8 +23,12 @@ set(TEST_SOURCES
 
     # Milestone 2 tests — native implementations
     mdns/NativeMdnsAdvertiserTests.cpp
-    airplay/RPiPlayCoreTests.cpp
 )
+
+# RPiPlayCore tests only when using RPiPlay backend
+if(NOT USE_UXPLAY)
+    list(APPEND TEST_SOURCES airplay/RPiPlayCoreTests.cpp)
+endif()
 
 add_executable(ReflectionTests ${TEST_SOURCES})
 
@@ -32,6 +36,15 @@ target_include_directories(ReflectionTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}           # For mock headers
     ${CMAKE_SOURCE_DIR}/src               # For production headers
 )
+
+# UxPlay path needs GStreamer includes for GStreamerPipeline.h
+if(USE_UXPLAY)
+    target_include_directories(ReflectionTests PRIVATE
+        ${GST_INCLUDE_DIRS}
+        ${GST_APP_INCLUDE_DIRS}
+        ${GST_VIDEO_INCLUDE_DIRS}
+    )
+endif()
 
 # Link production code objects (not the WIN32 exe — link source directly)
 # Only include sources that DON'T have heavy Windows/hardware dependencies.

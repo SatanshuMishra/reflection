@@ -1,14 +1,47 @@
 #include "airplay/UxPlayCore.h"
 #include "utilities/Logger.h"
 
-// UxPlay C headers
+// UxPlay C headers (stream.h already included via UxPlayCore.h)
 extern "C" {
 #include "raop.h"
-#include "stream.h"
+#include "dnssd.h"
 #include "global.h"
+#include "logger.h"
 }
 
 #include <cstring>
+
+namespace {
+
+void uxplay_log_callback(void* /*cls*/, int level, const char* msg) {
+    switch (level) {
+        case LOGGER_ERR:
+        case LOGGER_CRIT:
+        case LOGGER_ALERT:
+        case LOGGER_EMERG:
+            reflection::Logger::error("[UxPlay] {}", msg);
+            break;
+        case LOGGER_WARNING:
+            reflection::Logger::warn("[UxPlay] {}", msg);
+            break;
+        default:
+            reflection::Logger::debug("[UxPlay] {}", msg);
+            break;
+    }
+}
+
+// Stub callbacks for raop_callbacks_t fields that UxPlay calls without
+// NULL checks. Without these, the RTSP handler crashes at addr=0x0.
+void stub_video_pause(void*) {}
+void stub_video_resume(void*) {}
+void stub_conn_feedback(void*) {}
+void stub_conn_reset(void*, int) {}
+void stub_video_reset(void*, reset_type_t) {}
+double stub_audio_set_client_volume(void*) { return -30.0; }
+void stub_audio_flush(void*) {}
+void stub_video_flush(void*) {}
+
+} // anonymous namespace
 
 namespace reflection {
 
@@ -29,15 +62,35 @@ bool UxPlayCore::init(const AirPlayCoreConfig& config) {
     Logger::info("UxPlayCore::init — server_name='{}', raop_port={}, airplay_port={}",
                  config.server_name, config.raop_port, config.airplay_port);
 
-    // Build UxPlay callback struct
+    // Build UxPlay callback struct.
+    // UxPlay calls many callbacks WITHOUT null checks, so every field
+    // that gets invoked during the RTSP handshake must be non-NULL.
     raop_callbacks_t cbs = {};
     cbs.cls = this;
+
+    // Core data callbacks
     cbs.video_process = &on_video_process;
     cbs.audio_process = &on_audio_process;
+
+    // Connection lifecycle
     cbs.conn_init = &on_conn_init;
     cbs.conn_destroy = &on_conn_destroy;
+    cbs.conn_feedback = &stub_conn_feedback;
+    cbs.conn_reset = &stub_conn_reset;
+
+    // Video control (called without NULL checks during stream setup)
+    cbs.video_pause = &stub_video_pause;
+    cbs.video_resume = &stub_video_resume;
+    cbs.video_reset = &stub_video_reset;
+    cbs.video_flush = &stub_video_flush;
     cbs.video_report_size = reinterpret_cast<decltype(cbs.video_report_size)>(&on_video_report_size);
     cbs.video_set_codec = reinterpret_cast<decltype(cbs.video_set_codec)>(&on_video_set_codec);
+
+    // Audio control (audio_set_client_volume called without NULL check in RTSP INFO)
+    cbs.audio_set_client_volume = &stub_audio_set_client_volume;
+    cbs.audio_flush = &stub_audio_flush;
+
+    // Client identification
     cbs.report_client_request = reinterpret_cast<decltype(cbs.report_client_request)>(&on_report_client);
 
     // UxPlay's raop_init takes only callbacks (not max_connections)
@@ -54,8 +107,8 @@ bool UxPlayCore::init(const AirPlayCoreConfig& config) {
              config.hardware_address[2], config.hardware_address[3],
              config.hardware_address[4], config.hardware_address[5]);
 
-    // Second init phase: nohold=0, device_id from MAC, no keyfile
-    int init2_result = raop_init2(raop_, 0, hw_str, nullptr);
+    // NOTE: keyfile must be "" not nullptr — UxPlay's crypto.c calls strlen(keyfile)
+    int init2_result = raop_init2(raop_, 0, hw_str, "");
     if (init2_result < 0) {
         Logger::error("raop_init2 failed with error: {}", init2_result);
         raop_destroy(raop_);
@@ -63,11 +116,28 @@ bool UxPlayCore::init(const AirPlayCoreConfig& config) {
         return false;
     }
 
-    // Configure quality negotiation — request high resolution from iPad
+    // Register a dnssd module so UxPlay's /info handler returns proper
+    // deviceID, name, macAddress, and features. Without this, the iPad
+    // sees features=0 and immediately sends TEARDOWN.
+    int dnssd_error = 0;
+    dnssd_t* dnssd = dnssd_init(
+        config.server_name.c_str(),
+        static_cast<int>(config.server_name.size()),
+        reinterpret_cast<const char*>(config.hardware_address.data()),
+        static_cast<int>(config.hardware_address.size()),
+        &dnssd_error, 0);
+    if (dnssd) {
+        raop_set_dnssd(raop_, dnssd);  // Also copies pk_str into dnssd
+        Logger::info("DNS-SD module registered (features=0x{:X})",
+                     dnssd_get_airplay_features(dnssd));
+    }
+
     configure_quality_negotiation();
 
-    // Set log level
-    raop_set_log_level(raop_, RAOP_LOG_INFO);
+    // Set UxPlay's internal logger callback before changing log level.
+    // Without a callback, logger_log() asserts and crashes on NULL call.
+    raop_set_log_callback(raop_, &uxplay_log_callback, nullptr);
+    raop_set_log_level(raop_, LOGGER_INFO);
 
     Logger::info("UxPlay RAOP server initialized (with quality negotiation)");
     return true;
@@ -115,6 +185,12 @@ bool UxPlayCore::start() {
     running_.store(true);
     Logger::info("RAOP server started on port {}", port);
     return true;
+}
+
+std::string UxPlayCore::get_public_key() const {
+    if (!raop_) return "";
+    const char* pk = raop_get_pk_str(raop_);
+    return pk ? std::string(pk) : "";
 }
 
 void UxPlayCore::stop() {

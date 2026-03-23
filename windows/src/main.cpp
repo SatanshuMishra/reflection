@@ -99,6 +99,20 @@ struct MFGuard {
 };
 #endif
 
+/// SEH crash handler — writes crash address to log before terminating.
+LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
+    if (ep && ep->ExceptionRecord) {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "CRASH: code=0x%08lX addr=%p",
+            ep->ExceptionRecord->ExceptionCode,
+            ep->ExceptionRecord->ExceptionAddress);
+        reflection::Logger::error("{}", buf);
+        fflush(nullptr);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 } // namespace
 
 int WINAPI wWinMain(
@@ -107,6 +121,7 @@ int WINAPI wWinMain(
     _In_ LPWSTR /*cmd_line*/,
     _In_ int cmd_show
 ) {
+    SetUnhandledExceptionFilter(crash_filter);
     reflection::Logger::init();
     reflection::Logger::info("Reflection for Windows starting...");
 

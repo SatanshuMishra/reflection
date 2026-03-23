@@ -43,32 +43,9 @@ if(NOT uxplay_POPULATED)
         message(STATUS "Patched raop_rtp_mirror.c: VLA → _alloca() for MSVC")
     endif()
 
-    # Patch mirror_buffer.c — VLA for encrypted_data
-    set(_mbuf_file "${_uxplay_lib_dir}/mirror_buffer.c")
-    if(EXISTS "${_mbuf_file}")
-        file(READ "${_mbuf_file}" _mbuf_content)
-        # Common VLA patterns in mirror_buffer.c
-        string(REGEX REPLACE
-            "unsigned char ([a-zA-Z_]+)\\[([a-zA-Z_]+)\\];"
-            "unsigned char *\\1 = (unsigned char *)_alloca(\\2);"
-            _mbuf_content "${_mbuf_content}"
-        )
-        file(WRITE "${_mbuf_file}" "${_mbuf_content}")
-        message(STATUS "Patched mirror_buffer.c: VLA → _alloca() for MSVC")
-    endif()
-
-    # Patch raop_buffer.c — VLA for decrypted_data
-    set(_rbuf_file "${_uxplay_lib_dir}/raop_buffer.c")
-    if(EXISTS "${_rbuf_file}")
-        file(READ "${_rbuf_file}" _rbuf_content)
-        string(REGEX REPLACE
-            "unsigned char ([a-zA-Z_]+)\\[([a-zA-Z_]+)\\];"
-            "unsigned char *\\1 = (unsigned char *)_alloca(\\2);"
-            _rbuf_content "${_rbuf_content}"
-        )
-        file(WRITE "${_rbuf_file}" "${_rbuf_content}")
-        message(STATUS "Patched raop_buffer.c: VLA → _alloca() for MSVC")
-    endif()
+    # NOTE: mirror_buffer.c and raop_buffer.c have NO VLAs.
+    # The previous regex-based patch was too greedy and corrupted struct members.
+    # Only raop_rtp_mirror.c has an actual VLA (patched above with explicit string replace).
 
     # Patch compat.h — add <pthread.h> to the Windows path.
     # UxPlay's compat.h includes <pthread.h> only on Unix (#else branch).
@@ -85,12 +62,86 @@ if(NOT uxplay_POPULATED)
         file(WRITE "${_compat_file}" "${_compat_content}")
         message(STATUS "Patched compat.h: added <pthread.h> to Windows path")
     endif()
+
+    # Patch threads.h — THREAD_CREATE sets handle=0 on failure, but with
+    # pthreads4w, pthread_t is a struct {void *p; size_t x;}, not int.
+    # Replace the macro with a memset-based zero-init.
+    set(_threads_file "${_uxplay_lib_dir}/threads.h")
+    if(EXISTS "${_threads_file}")
+        file(READ "${_threads_file}" _threads_content)
+        string(REPLACE
+            "if (pthread_create(&(handle), NULL, func, arg)) handle = 0"
+            "if (pthread_create(&(handle), NULL, func, arg)) memset(&(handle), 0, sizeof(handle))"
+            _threads_content "${_threads_content}")
+        file(WRITE "${_threads_file}" "${_threads_content}")
+        message(STATUS "Patched threads.h: handle=0 → memset zero-init for pthreads4w")
+    endif()
+
+    # Patch httpd.c — add explicit MUTEX_CREATE for run_mutex.
+    # On Linux, calloc'd pthread_mutex_t works (= PTHREAD_MUTEX_INITIALIZER).
+    # On pthreads4w, pthread_mutex_t is a struct with a pointer that MUST be
+    # initialized via pthread_mutex_init(), or it segfaults on first lock.
+    set(_httpd_file "${_uxplay_lib_dir}/httpd.c")
+    if(EXISTS "${_httpd_file}")
+        file(READ "${_httpd_file}" _httpd_content)
+        string(REPLACE
+            "httpd->running = 0;\n    httpd->joined = 1;"
+            "MUTEX_CREATE(httpd->run_mutex);\n    httpd->running = 0;\n    httpd->joined = 1;"
+            _httpd_content "${_httpd_content}")
+        file(WRITE "${_httpd_file}" "${_httpd_content}")
+        message(STATUS "Patched httpd.c: added MUTEX_CREATE for pthreads4w")
+    endif()
+
+    # Patch raop.c — add raop_get_pk_str() to expose the generated public key.
+    # Our mDNS advertiser needs this to send the correct pk in TXT records.
+    set(_raop_c_file "${_uxplay_lib_dir}/raop.c")
+    if(EXISTS "${_raop_c_file}")
+        file(READ "${_raop_c_file}" _raop_c_content)
+        # Add getter after raop_get_callback_cls
+        string(REPLACE
+            "void *\nraop_get_callback_cls(raop_t *raop) {\n    assert(raop);\n    return raop->callbacks.cls;\n}"
+            "void *\nraop_get_callback_cls(raop_t *raop) {\n    assert(raop);\n    return raop->callbacks.cls;\n}\n\nconst char *\nraop_get_pk_str(raop_t *raop) {\n    assert(raop);\n    return raop->pk_str;\n}"
+            _raop_c_content "${_raop_c_content}")
+        file(WRITE "${_raop_c_file}" "${_raop_c_content}")
+        message(STATUS "Patched raop.c: added raop_get_pk_str()")
+    endif()
+
+    # Patch raop.h — declare raop_get_pk_str
+    set(_raop_h_file "${_uxplay_lib_dir}/raop.h")
+    if(EXISTS "${_raop_h_file}")
+        file(READ "${_raop_h_file}" _raop_h_content)
+        string(REPLACE
+            "RAOP_API void *raop_get_callback_cls(raop_t *raop);"
+            "RAOP_API void *raop_get_callback_cls(raop_t *raop);\nRAOP_API const char *raop_get_pk_str(raop_t *raop);"
+            _raop_h_content "${_raop_h_content}")
+        file(WRITE "${_raop_h_file}" "${_raop_h_content}")
+        message(STATUS "Patched raop.h: declared raop_get_pk_str()")
+    endif()
+
+    # Also patch raop.c if it has uninitialized mutexes
+    set(_raop_file "${_uxplay_lib_dir}/raop_rtp.c")
+    if(EXISTS "${_raop_file}")
+        file(READ "${_raop_file}" _raop_rtp_content)
+        # Check for calloc + MUTEX_LOCK without MUTEX_CREATE
+        if(_raop_rtp_content MATCHES "calloc.*raop_rtp_s" AND NOT _raop_rtp_content MATCHES "MUTEX_CREATE")
+            # Find the init function and add MUTEX_CREATE after calloc
+            string(REPLACE
+                "raop_rtp->running = 0;\n    raop_rtp->joined = 1;"
+                "MUTEX_CREATE(raop_rtp->run_mutex);\n    raop_rtp->running = 0;\n    raop_rtp->joined = 1;"
+                _raop_rtp_content "${_raop_rtp_content}")
+            file(WRITE "${_raop_file}" "${_raop_rtp_content}")
+            message(STATUS "Patched raop_rtp.c: added MUTEX_CREATE for pthreads4w")
+        endif()
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
-# Windows compatibility layer (shared with RPiPlay — same compat/ dir)
+# Windows compatibility layer — UxPlay-specific subset.
+# Uses its own compat/ (unistd.h, netinet/) WITHOUT pthread.h shim.
+# RPiPlay's compat/pthread.h is an empty shim (RPiPlay uses Win32 threads),
+# but UxPlay needs the REAL pthreads4w <pthread.h>.
 # --------------------------------------------------------------------------
-set(COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../airplay/compat")
+set(COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/compat")
 
 # --------------------------------------------------------------------------
 # UxPlay lib/ sources (excluding dnssd.c — we handle mDNS ourselves)
@@ -168,7 +219,9 @@ if(MSVC)
         )
     endif()
     message(STATUS "Found pthreads4w: ${PTHREADS_LIBRARY}")
-    target_include_directories(uxplay_core PRIVATE ${PTHREADS_INCLUDE_DIR})
+    # BEFORE ensures pthreads4w's real <pthread.h> is found before the
+    # compat/ directory's empty RPiPlay shim that would shadow it.
+    target_include_directories(uxplay_core BEFORE PRIVATE ${PTHREADS_INCLUDE_DIR})
     target_link_libraries(uxplay_core PRIVATE ${PTHREADS_LIBRARY})
 else()
     find_package(Threads REQUIRED)
@@ -208,9 +261,9 @@ if(PkgConfig_FOUND)
         set(PLIST_230_DEF "")
     endif()
 else()
-    # Assume modern libplist if pkg-config unavailable
+    # Assume modern libplist if pkg-config unavailable (vcpkg ships 2.7.0+)
     set(PLIST_210_DEF "PLIST_210")
-    set(PLIST_230_DEF "")
+    set(PLIST_230_DEF "PLIST_230")
 endif()
 
 # Compile definitions
@@ -227,12 +280,12 @@ target_compile_definitions(uxplay_core PRIVATE
 )
 
 if(MSVC)
-    # Force-include pthread.h (from pthreads4w) before all UxPlay sources.
-    # UxPlay's threads.h uses pthread_t, pthread_mutex_t, pthread_cond_t
-    # which must be available before any UxPlay header is processed.
+    # Force-include UxPlay-specific compat header (NOT RPiPlay's win_compat_pre.h
+    # which defines COND_*/pthread_cond_timedwait using Win32 HANDLEs that
+    # conflict with pthreads4w's real pthread implementation).
     target_compile_options(uxplay_core PRIVATE
         /FI"pthread.h"
-        /FI${COMPAT_DIR}/win_compat_pre.h
+        /FI${CMAKE_CURRENT_SOURCE_DIR}/uxplay_win_compat.h
         /W3
         /wd4005   # macro redefinition
         /wd4244   # conversion, possible loss of data

@@ -44,12 +44,16 @@ bool AirPlayService::start(const AirPlayServiceConfig& config) {
         return false;
     }
 
-    // Step 4: Advertise via mDNS
+    // Step 4: Advertise via mDNS (use the core's generated public key)
     const auto hw_hex = config.hw_address_hex();
+    const auto pk = core_->get_public_key();
+    if (!pk.empty()) {
+        Logger::info("Using generated public key for mDNS ({}...)", pk.substr(0, 16));
+    }
     const auto airplay_record = MdnsServiceRecord::make_airplay_record(
-        config.server_name, config.airplay_port, hw_hex);
+        config.server_name, config.airplay_port, hw_hex, pk);
     const auto raop_record = MdnsServiceRecord::make_raop_record(
-        config.server_name, config.raop_port, hw_hex);
+        config.server_name, config.raop_port, hw_hex, pk);
 
     if (!mdns_->advertise(airplay_record)) {
         Logger::error("Failed to advertise AirPlay mDNS service");

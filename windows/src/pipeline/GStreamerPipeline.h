@@ -44,7 +44,8 @@ public:
     [[nodiscard]] bool is_playing() const override;
 
 private:
-    GstElement* pipeline_ = nullptr;
+    GstElement* pipeline_ = nullptr;        // Video pipeline
+    GstElement* audio_pipeline_ = nullptr;  // Separate audio pipeline
     GstElement* video_appsrc_ = nullptr;
     GstElement* audio_appsrc_ = nullptr;
     GstElement* video_sink_ = nullptr;
