@@ -9,7 +9,11 @@
 #include "airplay/RPiPlayCore.h"
 #endif
 #include "mdns/NativeMdnsAdvertiser.h"
+#include "settings/AppSettings.h"
+#include "ui/ThemeManager.h"
 #include "views/MirrorWindow.h"
+#include "views/OnboardingWindow.h"
+#include "views/StatusWindow.h"
 #include "utilities/Constants.h"
 #include "utilities/Logger.h"
 
@@ -37,6 +41,12 @@ App::~App() {
         airplay_service_->stop();
     }
 
+    if (theme_manager_) {
+        theme_manager_->stop();
+    }
+
+    status_window_.reset();
+
     if (message_hwnd_) {
         DestroyWindow(message_hwnd_);
         message_hwnd_ = nullptr;
@@ -46,11 +56,23 @@ App::~App() {
 bool App::init(int /*cmd_show*/) {
     Logger::info("Initializing application...");
 
+    // Create settings manager
+    settings_ = std::make_unique<AppSettings>();
+
     if (!create_message_window()) {
         Logger::error("Failed to create message window");
         return false;
     }
 
+    // --- Onboarding (first-run only) ---
+    if (!OnboardingWindow::is_completed()) {
+        Logger::info("First run detected — showing onboarding wizard");
+        OnboardingWindow onboarding;
+        onboarding.show(instance_, *settings_);
+        // After onboarding, the server name is set in AppSettings
+    }
+
+    // --- System tray ---
     system_tray_ = std::make_unique<SystemTray>(instance_);
     if (!system_tray_->install(message_hwnd_)) {
         Logger::error("Failed to install system tray icon");
@@ -60,6 +82,22 @@ bool App::init(int /*cmd_show*/) {
     system_tray_->set_menu_callback(
         [this](int id) { on_tray_menu(id); });
 
+    // Set the server name in the tray menu
+    system_tray_->set_server_name(settings_->server_name());
+
+    // --- Theme manager ---
+    theme_manager_ = std::make_unique<ThemeManager>();
+    theme_manager_->start(message_hwnd_);
+
+    // --- Status window ---
+    status_window_ = std::make_unique<StatusWindow>();
+    status_window_->create(instance_, *settings_, message_hwnd_);
+
+    // Apply initial theme to status window
+    std::string theme = ThemeManager::get_effective_theme(settings_->theme());
+    status_window_->set_theme(theme);
+
+    // --- AirPlay service ---
     if (!start_airplay_service()) {
         Logger::error("Failed to start AirPlay service — iPad won't see this PC");
         system_tray_->set_tooltip(L"Reflection \u2014 AirPlay failed to start");
@@ -124,20 +162,25 @@ void App::on_tray_menu(int menu_item_id) {
             Logger::info("Disconnect requested from tray menu");
             cleanup_mirror_session();
             if (system_tray_) {
-                system_tray_->set_tooltip(L"Reflection \u2014 Waiting for iPad...");
+                system_tray_->set_connection_state(false);
+            }
+            if (status_window_) {
+                status_window_->set_disconnected();
             }
             break;
 
         case SystemTray::kMenuSettings:
             Logger::info("Settings requested from tray menu");
+            if (status_window_) {
+                status_window_->show();
+            }
             break;
 
-        case SystemTray::kMenuAbout:
-            Logger::info("About requested from tray menu");
-            break;
-
-        case SystemTray::kMenuCheckUpdate:
-            Logger::info("Check for updates requested from tray menu");
+        case SystemTray::kMenuShowWindow:
+            Logger::info("Show window requested from tray menu");
+            if (status_window_) {
+                status_window_->show();
+            }
             break;
 
         default:
@@ -203,6 +246,27 @@ LRESULT CALLBACK App::message_wnd_proc(
         return 0;
     }
 
+    if (msg == constants::kWmServerNameChanged) {
+        auto* app = reinterpret_cast<App*>(
+            GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        if (app) {
+            app->on_server_name_changed();
+        }
+        return 0;
+    }
+
+    if (msg == constants::kWmThemeChanged) {
+        auto* app = reinterpret_cast<App*>(
+            GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        if (app && app->settings_ && app->status_window_) {
+            std::string theme = ThemeManager::get_effective_theme(
+                app->settings_->theme());
+            app->status_window_->set_theme(theme);
+            Logger::info("System theme changed — updated to: {}", theme);
+        }
+        return 0;
+    }
+
     if (msg == constants::kWmMirrorWindowClosed) {
         auto* app = reinterpret_cast<App*>(
             GetWindowLongPtr(hwnd, GWLP_USERDATA));
@@ -261,10 +325,13 @@ void App::on_ipad_connected() {
     Logger::info("GStreamer pipeline started \u2014 rendering into mirror window");
 #endif
 
+    // Update tray and status window with connection state
+    std::wstring wdevice(device_name.begin(), device_name.end());
     if (system_tray_) {
-        std::wstring tooltip = L"Reflection \u2014 Connected: " +
-            std::wstring(device_name.begin(), device_name.end());
-        system_tray_->set_tooltip(tooltip);
+        system_tray_->set_connection_state(true, wdevice);
+    }
+    if (status_window_) {
+        status_window_->set_connected(device_name);
     }
 
     Logger::info("Mirror session started for: {}", device_name);
@@ -275,7 +342,10 @@ void App::on_ipad_disconnected() {
     cleanup_mirror_session();
 
     if (system_tray_) {
-        system_tray_->set_tooltip(L"Reflection \u2014 Waiting for iPad...");
+        system_tray_->set_connection_state(false);
+    }
+    if (status_window_) {
+        status_window_->set_disconnected();
     }
 }
 
@@ -292,6 +362,36 @@ void App::on_mirror_window_closed() {
 
     if (system_tray_) {
         system_tray_->set_tooltip(L"Reflection \u2014 Waiting for iPad...");
+    }
+}
+
+void App::on_server_name_changed() {
+    if (!settings_ || !airplay_service_) return;
+
+    std::wstring wname = settings_->server_name();
+    std::string name(wname.begin(), wname.end());
+    Logger::info("Server name changed to '{}' — restarting AirPlay service", name);
+
+    // Update the system tray
+    if (system_tray_) {
+        system_tray_->set_server_name(wname);
+    }
+
+    // Restart the AirPlay service with the new name
+    const AirPlayServiceConfig config{
+        .server_name = name,
+        .hardware_address = get_machine_mac_address(),
+        .raop_port = constants::kRaopPort,
+        .airplay_port = constants::kAirPlayPort,
+    };
+
+    if (!airplay_service_->restart(config)) {
+        Logger::error("Failed to restart AirPlay service with new name");
+        if (system_tray_) {
+            system_tray_->set_tooltip(L"Reflection \u2014 AirPlay restart failed");
+        }
+    } else {
+        Logger::info("AirPlay service restarted as '{}'", name);
     }
 }
 
@@ -393,8 +493,12 @@ bool App::start_airplay_service() {
             }
         });
 
+    // Convert wstring server name to narrow string for AirPlay protocol.
+    // Must store the wstring in a local to avoid dangling iterators —
+    // server_name() returns by value, so each call creates a new temporary.
+    const auto wname = settings_ ? settings_->server_name() : L"Reflection";
     const AirPlayServiceConfig config{
-        .server_name = "Reflection",
+        .server_name = std::string(wname.begin(), wname.end()),
         .hardware_address = get_machine_mac_address(),
         .raop_port = constants::kRaopPort,
         .airplay_port = constants::kAirPlayPort,
@@ -405,7 +509,8 @@ bool App::start_airplay_service() {
         return false;
     }
 
-    Logger::info("AirPlay service running \u2014 iPad should see 'Reflection' in Screen Mirroring");
+    Logger::info("AirPlay service running — iPad should see '{}' in Screen Mirroring",
+                  config.server_name);
     return true;
 }
 

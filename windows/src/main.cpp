@@ -7,6 +7,9 @@
 #include <ws2tcpip.h>
 #include <objbase.h>
 
+#include <cstdlib>
+#include <string>
+
 #ifdef USE_UXPLAY
 #include <gst/gst.h>
 #else
@@ -62,11 +65,71 @@ struct ComGuard {
 };
 
 #ifdef USE_UXPLAY
+/// Configure the MSYS2 GStreamer environment BEFORE gst_init().
+///
+/// Problem: MSVC-built exe loads GStreamer DLLs from MSYS2 ucrt64. Those DLLs
+/// and their plugins have transitive dependencies (libidn2, libiconv, etc.)
+/// that must come from MSYS2. But Git for Windows ships incompatible mingw64
+/// versions of the same DLLs in PATH (C:\Program Files\Git\mingw64\bin).
+///
+/// Solution: Detect the MSYS2 prefix from the co-located libgstreamer DLL,
+/// then PREPEND the MSYS2 bin/ to PATH (so it's searched before Git's) and
+/// set GST_PLUGIN_PATH to the MSYS2 plugin directory.
+void configure_gstreamer_environment() {
+    // Detect MSYS2 prefix from the libgstreamer DLL next to the exe.
+    // The DLL is co-located via CMake post-build copy, but we can read the
+    // MSYS2 prefix from where it was originally loaded.
+    std::string msys2_prefix;
+
+    // Try to find the MSYS2 install by checking known locations
+    const char* candidates[] = {
+        "C:\\msys64\\ucrt64",
+        "C:\\msys2\\ucrt64",
+        "D:\\msys64\\ucrt64",
+    };
+
+    for (const char* candidate : candidates) {
+        std::string test = std::string(candidate) + "\\bin\\libgstreamer-1.0-0.dll";
+        if (GetFileAttributesA(test.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            msys2_prefix = candidate;
+            break;
+        }
+    }
+
+    // Also check MSYS2_PREFIX environment variable
+    if (msys2_prefix.empty()) {
+        const char* env_prefix = std::getenv("MSYS2_PREFIX");
+        if (env_prefix && env_prefix[0]) {
+            msys2_prefix = env_prefix;
+        }
+    }
+
+    if (msys2_prefix.empty()) {
+        msys2_prefix = "C:\\msys64\\ucrt64";  // Fallback
+    }
+
+    // 1. Set GST_PLUGIN_PATH so gst_init() finds element plugins
+    std::string plugin_path = msys2_prefix + "\\lib\\gstreamer-1.0";
+    _putenv_s("GST_PLUGIN_PATH", plugin_path.c_str());
+
+    // 2. PREPEND MSYS2 bin/ to PATH so ALL transitive DLL dependencies
+    //    are resolved from MSYS2 before Git for Windows or other MinGW installs
+    std::string msys2_bin = msys2_prefix + "\\bin";
+    const char* current_path = std::getenv("PATH");
+    std::string new_path = msys2_bin;
+    if (current_path && current_path[0]) {
+        new_path += ";";
+        new_path += current_path;
+    }
+    _putenv_s("PATH", new_path.c_str());
+}
+
 /// RAII wrapper for GStreamer initialization.
 struct GStreamerGuard {
     bool initialized = false;
 
     GStreamerGuard() {
+        configure_gstreamer_environment();
         gst_init(nullptr, nullptr);
         initialized = true;  // gst_init always succeeds or aborts
     }
@@ -115,15 +178,36 @@ LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
 
 } // namespace
 
+/// Parse command-line for development flags.
+/// Supported: --reset-onboarding  (clears the OnboardingCompleted registry value)
+void handle_dev_flags(LPWSTR cmd_line) {
+    if (!cmd_line || !cmd_line[0]) return;
+
+    std::wstring args(cmd_line);
+
+    if (args.find(L"--reset-onboarding") != std::wstring::npos) {
+        HKEY key;
+        if (RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\Reflection",
+                         0, KEY_WRITE, &key) == ERROR_SUCCESS) {
+            RegDeleteValue(key, L"OnboardingCompleted");
+            RegCloseKey(key);
+            reflection::Logger::info("--reset-onboarding: cleared OnboardingCompleted");
+        }
+    }
+}
+
 int WINAPI wWinMain(
     _In_ HINSTANCE instance,
     _In_opt_ HINSTANCE /*prev_instance*/,
-    _In_ LPWSTR /*cmd_line*/,
+    _In_ LPWSTR cmd_line,
     _In_ int cmd_show
 ) {
     SetUnhandledExceptionFilter(crash_filter);
     reflection::Logger::init();
     reflection::Logger::info("Reflection for Windows starting...");
+
+    // Process development flags before app init
+    handle_dev_flags(cmd_line);
 
     // Initialize subsystems (RAII — cleaned up in reverse order on exit)
     const WinsockGuard winsock;

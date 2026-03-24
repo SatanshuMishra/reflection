@@ -12,7 +12,7 @@
 namespace reflection {
 
 /// Manages the Windows system tray icon and right-click context menu.
-/// Mirrors the macOS StatusBarController.
+/// Shows dynamic connection state and server name.
 class SystemTray {
 public:
     using MenuCallback = std::function<void(int menu_item_id)>;
@@ -39,11 +39,17 @@ public:
     /// Set callback for menu item selection.
     void set_menu_callback(MenuCallback callback);
 
+    /// Update the connection state shown in the context menu.
+    void set_connection_state(bool connected,
+                               const std::wstring& device_name = L"");
+
+    /// Update the server name shown in the context menu.
+    void set_server_name(const std::wstring& name);
+
     // Menu item IDs
     static constexpr int kMenuDisconnect = 1001;
     static constexpr int kMenuSettings = 1002;
-    static constexpr int kMenuAbout = 1003;
-    static constexpr int kMenuCheckUpdate = 1004;
+    static constexpr int kMenuShowWindow = 1003;
     static constexpr int kMenuQuit = 1005;
 
 private:
@@ -51,6 +57,11 @@ private:
     NOTIFYICONDATA nid_{};
     bool installed_ = false;
     MenuCallback menu_callback_;
+
+    // Dynamic menu state
+    bool connected_ = false;
+    std::wstring device_name_;
+    std::wstring server_name_ = L"Reflection";
 };
 
 } // namespace reflection
