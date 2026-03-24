@@ -134,10 +134,27 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache GStreamer MSVC
+        id: cache-gstreamer
+        uses: actions/cache@v4
+        with:
+          path: C:\gstreamer
+          key: gstreamer-msvc-1.22.7
+
       - name: Install GStreamer MSVC
+        if: steps.cache-gstreamer.outputs.cache-hit != 'true'
         uses: blinemedical/setup-gstreamer@v1
         with:
           version: '1.22.7'
+
+      - name: Set GStreamer environment (from cache)
+        if: steps.cache-gstreamer.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          $gstPath = "C:\gstreamer\1.0\msvc_x86_64"
+          [System.Environment]::SetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64", $gstPath, "Process")
+          echo "GSTREAMER_1_0_ROOT_MSVC_X86_64=$gstPath" >> $env:GITHUB_ENV
+          echo "$gstPath\bin" >> $env:GITHUB_PATH
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
