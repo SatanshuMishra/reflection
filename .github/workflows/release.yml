@@ -139,13 +139,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\gstreamer
-          key: gstreamer-msvc-1.22.7
+          key: gstreamer-msvc-1.22.12
 
       - name: Install GStreamer MSVC
         if: steps.cache-gstreamer.outputs.cache-hit != 'true'
         uses: blinemedical/setup-gstreamer@v1
         with:
-          version: '1.22.7'
+          version: '1.22.12'
 
       - name: Set GStreamer environment (from cache)
         if: steps.cache-gstreamer.outputs.cache-hit == 'true'
