@@ -51,6 +51,14 @@ function handleHostMessage(data) {
             currentServerName = data.name;
             document.getElementById('serverNameText').textContent = data.name;
             break;
+
+        case 'firewallStatus':
+            updateFirewallBanner(!data.configured);
+            break;
+
+        case 'firewallResult':
+            onFirewallResult(data.success);
+            break;
     }
 }
 
@@ -231,4 +239,57 @@ function setRunInBackground(enabled) {
 
 function setLaunchAtLogin(enabled) {
     sendToHost({ type: 'setLaunchAtLogin', enabled: enabled });
+}
+
+// --- Window Controls ---
+
+function minimizeWindow() {
+    sendToHost({ type: 'minimizeWindow' });
+}
+
+function closeWindow() {
+    sendToHost({ type: 'closeWindow' });
+}
+
+// Drag handle
+(function() {
+    document.addEventListener('DOMContentLoaded', function() {
+        var handle = document.getElementById('dragHandle');
+        if (handle) {
+            handle.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                sendToHost({ type: 'startDrag' });
+            });
+        }
+    });
+})();
+
+// --- Firewall Banner ---
+
+function updateFirewallBanner(show) {
+    var banner = document.getElementById('firewallBanner');
+    if (banner) {
+        if (show) {
+            banner.classList.add('visible');
+        } else {
+            banner.classList.remove('visible');
+        }
+    }
+}
+
+function grantFirewallFromBanner() {
+    var btn = document.getElementById('bannerGrantBtn');
+    btn.disabled = true;
+    btn.textContent = 'Requesting...';
+    sendToHost({ type: 'configureFirewall' });
+}
+
+function onFirewallResult(success) {
+    var btn = document.getElementById('bannerGrantBtn');
+    if (success) {
+        updateFirewallBanner(false);
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Try Again';
+    }
 }

@@ -8,6 +8,7 @@
 #include "utilities/NameGenerator.h"
 
 #include <dwmapi.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "dwmapi.lib")
 
@@ -68,12 +69,13 @@ bool StatusWindow::create(HINSTANCE instance, AppSettings& settings,
     wc.lpszClassName = constants::kStatusWindowClass.data();
     RegisterClassEx(&wc);
 
-    // Window style — resizable with title bar
-    const DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+    // Window style — borderless popup (custom chrome via WebView2).
+    // WS_THICKFRAME enables resizing, WS_MINIMIZEBOX enables taskbar minimize.
+    // No WS_CAPTION/WS_SYSMENU — title bar is drawn in HTML.
+    const DWORD style = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN;
     const DWORD ex_style = WS_EX_APPWINDOW;
 
-    // Calculate total window size for desired CLIENT area (400×380).
-    // AdjustWindowRectEx accounts for title bar, borders, and padding.
+    // For a popup window the client area IS the window area (no chrome to subtract)
     RECT desired = {0, 0, constants::kStatusWindowWidth, constants::kStatusWindowHeight};
     AdjustWindowRectEx(&desired, style, FALSE, ex_style);
 
@@ -148,7 +150,14 @@ bool StatusWindow::create(HINSTANCE instance, AppSettings& settings,
             "}";
         webview_->post_message(make_json_w(settings_json));
 
-        Logger::info("Status window loaded — server name: {}", server_name);
+        // Send firewall status so the UI can show a banner if needed
+        bool fw_ok = settings_->firewall_configured();
+        webview_->post_message(make_json_w(
+            "{\"type\":\"firewallStatus\",\"configured\":" +
+            std::string(fw_ok ? "true" : "false") + "}"));
+
+        Logger::info("Status window loaded -- server name: {}, firewall: {}",
+                     server_name, fw_ok ? "ok" : "missing");
 
         page_loaded_ = true;
 
@@ -328,6 +337,67 @@ void StatusWindow::on_message_from_webview(const std::wstring& json_w) {
         if (message_hwnd_) {
             PostMessage(message_hwnd_, constants::kWmIpadDisconnected, 0, 0);
         }
+    } else if (type == "configureFirewall") {
+        configure_firewall();
+    } else if (type == "minimizeWindow") {
+        ShowWindow(hwnd_, SW_MINIMIZE);
+    } else if (type == "closeWindow") {
+        if (settings_ && settings_->minimize_to_tray()) {
+            ShowWindow(hwnd_, SW_HIDE);
+        } else {
+            PostQuitMessage(0);
+        }
+    } else if (type == "startDrag") {
+        ReleaseCapture();
+        PostMessage(hwnd_, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+    }
+}
+
+void StatusWindow::configure_firewall() {
+    wchar_t exe_path[MAX_PATH];
+    GetModuleFileName(nullptr, exe_path, MAX_PATH);
+
+    std::wstring netsh_args =
+        L"advfirewall firewall add rule "
+        L"name=\"Reflection\" dir=in action=allow "
+        L"program=\"" + std::wstring(exe_path) + L"\" "
+        L"enable=yes";
+
+    Logger::info("Status window: configuring firewall");
+
+    SHELLEXECUTEINFO sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb = L"runas";
+    sei.lpFile = L"netsh.exe";
+    sei.lpParameters = netsh_args.c_str();
+    sei.nShow = SW_HIDE;
+
+    bool success = false;
+    if (ShellExecuteEx(&sei)) {
+        if (sei.hProcess) {
+            WaitForSingleObject(sei.hProcess, 15000);
+            DWORD exit_code = 1;
+            GetExitCodeProcess(sei.hProcess, &exit_code);
+            CloseHandle(sei.hProcess);
+            success = (exit_code == 0);
+        }
+    }
+
+    if (success && settings_) {
+        settings_->set_firewall_configured(true);
+
+        // Notify main app to start AirPlay service now that firewall allows it
+        if (message_hwnd_) {
+            PostMessage(message_hwnd_, constants::kWmFirewallGranted, 0, 0);
+        }
+    }
+
+    // Send result back to webview
+    std::string result_json = "{\"type\":\"firewallResult\",\"success\":" +
+        std::string(success ? "true" : "false") + "}";
+    if (webview_) {
+        webview_->post_message(make_json_w(result_json));
     }
 }
 
