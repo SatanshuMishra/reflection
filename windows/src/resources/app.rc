@@ -1,0 +1,3 @@
+// Windows application resources for Reflection
+// Icon resource — ID 1 is used for the application icon and system tray
+1 ICON "app.ico"
