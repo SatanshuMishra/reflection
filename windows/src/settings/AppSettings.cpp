@@ -50,6 +50,14 @@ void AppSettings::set_theme(const std::string& theme) {
     write_string(constants::kRegKeyTheme.data(), wtheme);
 }
 
+bool AppSettings::firewall_configured() const {
+    return read_bool(L"FirewallConfigured", false);
+}
+
+void AppSettings::set_firewall_configured(bool configured) {
+    write_bool(L"FirewallConfigured", configured);
+}
+
 // -- Registry helpers --
 
 std::wstring AppSettings::read_string(

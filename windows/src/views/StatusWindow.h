@@ -64,6 +64,9 @@ private:
                                       WPARAM wparam, LPARAM lparam);
     void on_message_from_webview(const std::wstring& json);
 
+    /// Run elevated netsh.exe to add a firewall inbound rule.
+    void configure_firewall();
+
     /// Get the absolute path to the UI assets directory.
     static std::wstring get_assets_path();
 
