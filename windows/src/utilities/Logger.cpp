@@ -21,17 +21,18 @@ namespace {
 void Logger::init() {
     std::lock_guard lock(g_log_mutex);
 
-    // Allocate a console window so logs are visible when running the GUI app.
-    // This is essential for debugging — WIN32 apps have no console by default.
+    // Allocate a console window for live log output during development.
+    // Only enabled in Debug builds -- Release builds log to file + OutputDebugString only.
+#ifdef _DEBUG
     if (AllocConsole()) {
         FILE* dummy = nullptr;
         freopen_s(&dummy, "CONOUT$", "w", stdout);
         freopen_s(&dummy, "CONOUT$", "w", stderr);
         g_console_attached = true;
 
-        // Set console title
         SetConsoleTitleW(L"Reflection -- Log Output");
     }
+#endif
 
     // Also open a log file next to the executable for post-mortem analysis
     wchar_t exe_path[MAX_PATH]{};
