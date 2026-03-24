@@ -26,7 +26,7 @@ bool GStreamerPipeline::init(HWND window_handle) {
     if (has_hw_decoder_) {
         Logger::info("Hardware H.264 decoder (d3d11h264dec) available");
     } else {
-        Logger::info("No hardware decoder — using software decode (avdec_h264)");
+        Logger::info("No hardware decoder -- using software decode (avdec_h264)");
     }
 
     // Build video pipeline
@@ -37,7 +37,7 @@ bool GStreamerPipeline::init(HWND window_handle) {
 
     // Audio in a SEPARATE pipeline — prevents audio preroll from blocking video.
     if (!build_audio_pipeline()) {
-        Logger::warn("Audio pipeline not available — video only");
+        Logger::warn("Audio pipeline not available -- video only");
     }
 
     // Set up bus watch for error/EOS messages
@@ -189,7 +189,7 @@ bool GStreamerPipeline::build_audio_pipeline() {
     }
 
     if (!aacparse || !aacdec || !audioconvert || !audioresample || !audiosink) {
-        Logger::warn("Some audio elements not available — audio disabled");
+        Logger::warn("Some audio elements not available -- audio disabled");
         if (audio_appsrc_) { gst_object_unref(audio_appsrc_); audio_appsrc_ = nullptr; }
         if (aacparse) gst_object_unref(aacparse);
         if (aacdec) gst_object_unref(aacdec);
@@ -207,7 +207,7 @@ bool GStreamerPipeline::build_audio_pipeline() {
         audio_appsrc_, aacparse, aacdec, audioconvert, audioresample, audiosink, nullptr);
 
     if (!gst_element_link_many(audio_appsrc_, aacparse, aacdec, audioconvert, audioresample, audiosink, nullptr)) {
-        Logger::warn("Failed to link audio pipeline — audio disabled");
+        Logger::warn("Failed to link audio pipeline -- audio disabled");
         gst_object_unref(audio_pipeline_);
         audio_pipeline_ = nullptr;
         audio_appsrc_ = nullptr;

@@ -66,7 +66,7 @@ bool App::init(int /*cmd_show*/) {
 
     // --- Onboarding (first-run only) ---
     if (!OnboardingWindow::is_completed()) {
-        Logger::info("First run detected — showing onboarding wizard");
+        Logger::info("First run detected -- showing onboarding wizard");
         OnboardingWindow onboarding;
         onboarding.show(instance_, *settings_);
         // After onboarding, the server name is set in AppSettings
@@ -97,13 +97,21 @@ bool App::init(int /*cmd_show*/) {
     std::string theme = ThemeManager::get_effective_theme(settings_->theme());
     status_window_->set_theme(theme);
 
-    // --- AirPlay service ---
-    if (!start_airplay_service()) {
-        Logger::error("Failed to start AirPlay service — iPad won't see this PC");
-        system_tray_->set_tooltip(L"Reflection \u2014 AirPlay failed to start");
+    // --- AirPlay service (lazy-start) ---
+    // Only start if firewall permission has been granted. Broadcasting mDNS
+    // without firewall access is wasteful and misleading -- iPad sees the
+    // service but connections are silently blocked by Windows Firewall.
+    if (settings_->firewall_configured()) {
+        if (!start_airplay_service()) {
+            Logger::error("Failed to start AirPlay service -- iPad won't see this PC");
+            system_tray_->set_tooltip(L"Reflection -- AirPlay failed to start");
+        }
+    } else {
+        Logger::info("Firewall permission not yet granted -- AirPlay service deferred");
+        system_tray_->set_tooltip(L"Reflection -- Network permission required");
     }
 
-    Logger::info("Application initialized \u2014 waiting for AirPlay connections...");
+    Logger::info("Application initialized -- waiting for AirPlay connections...");
     return true;
 }
 
@@ -262,7 +270,7 @@ LRESULT CALLBACK App::message_wnd_proc(
             std::string theme = ThemeManager::get_effective_theme(
                 app->settings_->theme());
             app->status_window_->set_theme(theme);
-            Logger::info("System theme changed — updated to: {}", theme);
+            Logger::info("System theme changed -- updated to: {}", theme);
         }
         return 0;
     }
@@ -272,6 +280,20 @@ LRESULT CALLBACK App::message_wnd_proc(
             GetWindowLongPtr(hwnd, GWLP_USERDATA));
         if (app) {
             app->on_mirror_window_closed();
+        }
+        return 0;
+    }
+
+    if (msg == constants::kWmFirewallGranted) {
+        auto* app = reinterpret_cast<App*>(
+            GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        if (app && !app->airplay_service_) {
+            Logger::info("Firewall granted -- starting AirPlay service now");
+            if (!app->start_airplay_service()) {
+                Logger::error("Failed to start AirPlay service after firewall grant");
+            } else if (app->system_tray_) {
+                app->system_tray_->set_tooltip(L"Reflection -- Waiting for iPad...");
+            }
         }
         return 0;
     }
@@ -294,14 +316,14 @@ void App::on_ipad_connected() {
     }
 
     if (mirror_window_ && mirror_window_->hwnd()) {
-        Logger::info("Mirror window already exists \u2014 bringing to front");
+        Logger::info("Mirror window already exists -- bringing to front");
         SetForegroundWindow(mirror_window_->hwnd());
         return;
     }
 
     // Create the mirror window (lightweight — no D3D11 renderer, GStreamer renders into it)
     mirror_window_ = std::make_unique<MirrorWindow>();
-    std::wstring title = L"Reflection \u2014 " +
+    std::wstring title = L"Reflection -- " +
         std::wstring(device_name.begin(), device_name.end());
 
     if (!mirror_window_->create(instance_, title, message_hwnd_)) {
@@ -322,7 +344,7 @@ void App::on_ipad_connected() {
 
     // Start the pipeline (transitions to PLAYING state)
     pipeline_->start();
-    Logger::info("GStreamer pipeline started \u2014 rendering into mirror window");
+    Logger::info("GStreamer pipeline started -- rendering into mirror window");
 #endif
 
     // Update tray and status window with connection state
@@ -338,7 +360,7 @@ void App::on_ipad_connected() {
 }
 
 void App::on_ipad_disconnected() {
-    Logger::info("iPad disconnected \u2014 cleaning up mirror session");
+    Logger::info("iPad disconnected -- cleaning up mirror session");
     cleanup_mirror_session();
 
     if (system_tray_) {
@@ -361,7 +383,7 @@ void App::on_mirror_window_closed() {
     mirror_window_.reset();
 
     if (system_tray_) {
-        system_tray_->set_tooltip(L"Reflection \u2014 Waiting for iPad...");
+        system_tray_->set_tooltip(L"Reflection -- Waiting for iPad...");
     }
 }
 
@@ -370,7 +392,7 @@ void App::on_server_name_changed() {
 
     std::wstring wname = settings_->server_name();
     std::string name(wname.begin(), wname.end());
-    Logger::info("Server name changed to '{}' — restarting AirPlay service", name);
+    Logger::info("Server name changed to '{}' -- restarting AirPlay service", name);
 
     // Update the system tray
     if (system_tray_) {
@@ -388,7 +410,7 @@ void App::on_server_name_changed() {
     if (!airplay_service_->restart(config)) {
         Logger::error("Failed to restart AirPlay service with new name");
         if (system_tray_) {
-            system_tray_->set_tooltip(L"Reflection \u2014 AirPlay restart failed");
+            system_tray_->set_tooltip(L"Reflection -- AirPlay restart failed");
         }
     } else {
         Logger::info("AirPlay service restarted as '{}'", name);
@@ -509,7 +531,7 @@ bool App::start_airplay_service() {
         return false;
     }
 
-    Logger::info("AirPlay service running — iPad should see '{}' in Screen Mirroring",
+    Logger::info("AirPlay service running -- iPad should see '{}' in Screen Mirroring",
                   config.server_name);
     return true;
 }

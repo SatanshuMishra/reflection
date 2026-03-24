@@ -30,7 +30,7 @@ void Logger::init() {
         g_console_attached = true;
 
         // Set console title
-        SetConsoleTitleW(L"Reflection — Log Output");
+        SetConsoleTitleW(L"Reflection -- Log Output");
     }
 
     // Also open a log file next to the executable for post-mortem analysis

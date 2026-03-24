@@ -69,7 +69,7 @@ bool AirPlayService::start(const AirPlayServiceConfig& config) {
     }
 
     running_ = true;
-    Logger::info("AirPlay service started — advertising as '{}'", config.server_name);
+    Logger::info("AirPlay service started -- advertising as '{}'", config.server_name);
     return true;
 }
 

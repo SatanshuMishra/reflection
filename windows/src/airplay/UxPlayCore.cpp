@@ -59,7 +59,7 @@ bool UxPlayCore::init(const AirPlayCoreConfig& config) {
 
     config_ = config;
 
-    Logger::info("UxPlayCore::init — server_name='{}', raop_port={}, airplay_port={}",
+    Logger::info("UxPlayCore::init -- server_name='{}', raop_port={}, airplay_port={}",
                  config.server_name, config.raop_port, config.airplay_port);
 
     // Build UxPlay callback struct.
@@ -167,7 +167,7 @@ bool UxPlayCore::start() {
         return false;
     }
 
-    Logger::info("UxPlayCore::start — listening on port {}", config_.raop_port);
+    Logger::info("UxPlayCore::start -- listening on port {}", config_.raop_port);
 
     unsigned short port = config_.raop_port;
     int result = raop_start_httpd(raop_, &port);
