@@ -85,4 +85,4 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
-          ctest --test-dir build --config Release --output-on-failure
+          ctest --test-dir build -C Release --output-on-failure
