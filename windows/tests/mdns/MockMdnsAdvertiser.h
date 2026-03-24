@@ -54,6 +54,12 @@ public:
         }
         return result;
     }
+
+    void force_reannounce() override {
+        ++force_reannounce_call_count;
+    }
+
+    int force_reannounce_call_count = 0;
 };
 
 } // namespace reflection::testing
