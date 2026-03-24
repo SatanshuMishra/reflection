@@ -93,11 +93,20 @@ jobs:
             msi_win_path="$(cygpath -w "$RUNNER_TEMP/$file")"
             local log_win_path
             log_win_path="$(cygpath -w "$RUNNER_TEMP/$file.install.log")"
-            echo "[msiexec] installing $file"
-            if ! msiexec //i "$msi_win_path" //qn //norestart //l*v "$log_win_path" INSTALLDIR=D:\\gstreamer; then
-              echo "ERROR[msiexec-$file]: log=$log_win_path"
-              exit 15
-            fi
+            local attempt
+            for attempt in 1 2; do
+              echo "[msiexec] installing $file (attempt $attempt)"
+              timeout 300 msiexec //i "$msi_win_path" //qn //norestart //l*v "$log_win_path" INSTALLDIR=D:\\gstreamer && return 0
+              local rc=$?
+              echo "WARNING[msiexec-$file]: attempt $attempt failed (rc=$rc)"
+              if [ $rc -eq 124 ]; then
+                echo "WARNING[msiexec-timeout]: killing stale msiexec processes"
+                taskkill //F //IM msiexec.exe 2>/dev/null || true
+                sleep 5
+              fi
+            done
+            echo "ERROR[msiexec-$file]: failed after 2 attempts; log=$log_win_path"
+            exit 15
           }
 
           download_msi "$RUNTIME"
