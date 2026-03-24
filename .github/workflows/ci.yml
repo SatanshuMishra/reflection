@@ -36,7 +36,7 @@ jobs:
       - name: Install GStreamer MSVC
         uses: blinemedical/setup-gstreamer@v1
         with:
-          version: '1.24.12'
+          version: '1.22.7'
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
