@@ -298,6 +298,15 @@ LRESULT CALLBACK App::message_wnd_proc(
         return 0;
     }
 
+    if (msg == constants::kWmForceReannounce) {
+        auto* app = reinterpret_cast<App*>(
+            GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        if (app && app->airplay_service_) {
+            app->airplay_service_->force_reannounce();
+        }
+        return 0;
+    }
+
     return DefWindowProc(hwnd, msg, wp, lp);
 }
 
@@ -372,18 +381,40 @@ void App::on_ipad_disconnected() {
 }
 
 void App::on_mirror_window_closed() {
-    Logger::info("Mirror window closed by user");
+    Logger::info("Mirror window closed by user -- forcing immediate disconnect");
 
-    // Stop GStreamer pipeline first
+    // 1. Stop rendering immediately
     if (pipeline_) {
         pipeline_->stop();
         pipeline_.reset();
     }
-
     mirror_window_.reset();
 
+    // 2. Update UI to disconnected state IMMEDIATELY (don't wait for UxPlay timeout)
     if (system_tray_) {
-        system_tray_->set_tooltip(L"Reflection -- Waiting for iPad...");
+        system_tray_->set_connection_state(false);
+    }
+    if (status_window_) {
+        status_window_->set_disconnected();
+    }
+
+    // 3. Restart AirPlay service to force RTSP TEARDOWN on the iPad side.
+    // Without this, UxPlay's internal keepalive waits ~60s before detecting
+    // the dead session. Restarting closes the RAOP server socket, which
+    // immediately triggers a TCP RST to the iPad, and re-advertises via mDNS.
+    if (airplay_service_ && settings_) {
+        const auto wname = settings_->server_name();
+        const AirPlayServiceConfig config{
+            .server_name = std::string(wname.begin(), wname.end()),
+            .hardware_address = get_machine_mac_address(),
+            .raop_port = constants::kRaopPort,
+            .airplay_port = constants::kAirPlayPort,
+        };
+        if (airplay_service_->restart(config)) {
+            Logger::info("AirPlay service restarted -- iPad will see immediate disconnect");
+        } else {
+            Logger::error("Failed to restart AirPlay service after mirror close");
+        }
     }
 }
 
