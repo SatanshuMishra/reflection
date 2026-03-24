@@ -164,7 +164,7 @@ function requestFirewall() {
     document.getElementById('firewallStatusText').textContent = 'Configuring...';
 
     // Hide skip while configuring
-    document.getElementById('skipRow').style.display = 'none';
+    document.getElementById('skipBtn').style.display = 'none';
 
     sendToHost({ type: 'configureFirewall' });
 }
@@ -175,7 +175,6 @@ function onFirewallResult(success, message) {
     var statusIcon = document.getElementById('firewallStatusIcon');
     var firewallActions = document.getElementById('firewallActions');
     var completeActions = document.getElementById('completeActions');
-    var skipRow = document.getElementById('skipRow');
 
     // Restore the SVG icon (replace spinner)
     var checkSvg = '<svg class="status-icon check-appear" viewBox="0 0 24 24" fill="currentColor">' +
@@ -192,7 +191,6 @@ function onFirewallResult(success, message) {
 
         // Replace buttons with "Start Reflecting"
         firewallActions.style.display = 'none';
-        skipRow.style.display = 'none';
         completeActions.style.display = 'flex';
         completeActions.classList.add('spring-in');
     } else {
@@ -208,13 +206,31 @@ function onFirewallResult(success, message) {
         setTimeout(function() { btn.classList.remove('shake'); }, 500);
 
         // Show skip option
-        skipRow.style.display = 'flex';
+        document.getElementById('skipBtn').style.display = '';
     }
 }
 
 function completeOnboarding() {
     sendToHost({ type: 'onboardingComplete' });
 }
+
+function minimizeWindow() {
+    sendToHost({ type: 'minimizeWindow' });
+}
+
+// --- Window Drag ---
+// WebView2 intercepts all mouse events, so CSS -webkit-app-region doesn't work.
+// Instead, detect mousedown on the drag handle and send a message to C++ which
+// initiates a native window move via WM_SYSCOMMAND + SC_MOVE.
+(function() {
+    var handle = document.getElementById('dragHandle');
+    if (handle) {
+        handle.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            sendToHost({ type: 'startDrag' });
+        });
+    }
+})();
 
 // --- Animation Helpers ---
 

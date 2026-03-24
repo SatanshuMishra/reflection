@@ -9,6 +9,12 @@
 html, body {
     height: 100%;
     overflow: hidden;
+}
+
+/* Disable selection on interactive chrome, allow on content */
+button, .btn, .btn-icon, .toggle, .segmented-option,
+.drag-handle, .minimize-btn, .step-indicator,
+.toolbar, .window-controls {
     -webkit-user-select: none;
     user-select: none;
 }

@@ -89,11 +89,12 @@ bool OnboardingWindow::show(HINSTANCE instance, AppSettings& settings) {
     const int y = (screen_h - constants::kOnboardingHeight) / 2;
 
     // Create chromeless window (WS_POPUP for no title bar)
+    // WS_MINIMIZEBOX allows the window to be minimized via taskbar
     hwnd_ = CreateWindowEx(
         WS_EX_APPWINDOW,
         constants::kOnboardingWindowClass.data(),
-        L"Reflection — Setup",
-        WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN,
+        L"Reflection -- Setup",
+        WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN | WS_MINIMIZEBOX,
         x, y,
         constants::kOnboardingWidth,
         constants::kOnboardingHeight,
@@ -247,6 +248,14 @@ void OnboardingWindow::on_message_from_webview(const std::wstring& json_w) {
         completed_ = true;
         // Post quit to break the modal message loop
         PostMessage(hwnd_, WM_CLOSE, 0, 0);
+    } else if (type == "minimizeWindow") {
+        ShowWindow(hwnd_, SW_MINIMIZE);
+    } else if (type == "startDrag") {
+        // Initiate native window move — release mouse capture first so
+        // the system can take over the drag. PostMessage is used so the
+        // WebView2 message handler returns before the blocking drag loop.
+        ReleaseCapture();
+        PostMessage(hwnd_, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
     }
 }
 
@@ -304,12 +313,15 @@ void OnboardingWindow::configure_firewall() {
     // Send result back to WebView2
     if (success) {
         Logger::info("Firewall rule added successfully");
+        if (settings_) {
+            settings_->set_firewall_configured(true);
+        }
         webview_->post_message(
             L"{\"type\":\"firewallResult\",\"success\":true}");
     } else {
         Logger::warn("Firewall configuration failed (exit_code={})", exit_code);
         std::wstring msg = L"{\"type\":\"firewallResult\",\"success\":false,"
-                           L"\"message\":\"Firewall configuration failed — "
+                           L"\"message\":\"Firewall configuration failed -- "
                            L"you can configure it manually in Windows Security\"}";
         webview_->post_message(msg);
     }
