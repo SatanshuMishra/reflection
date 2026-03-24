@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(Reflection
-    VERSION 1.0.0
+    VERSION 1.6.0
     DESCRIPTION "AirPlay iPad screen mirroring for Windows"
     LANGUAGES C CXX
 )
@@ -401,6 +401,54 @@ if(USE_UXPLAY AND GST_LIBRARY_DIRS MATCHES "msys64")
     endforeach()
 
     message(STATUS "MSYS2 GStreamer DLLs will be copied to build output (${_MSYS2_BIN_DIR})")
+
+    # ------------------------------------------------------------------
+    # GStreamer PLUGIN DLLs -- loaded dynamically by gst_init().
+    # These provide the actual codec/element implementations (h264parse,
+    # d3d11h264dec, etc.). Without them the app cannot decode or render.
+    # Plugins go in a plugins/ subdirectory next to the executable so
+    # configure_gstreamer_environment() can set GST_PLUGIN_PATH to it.
+    # ------------------------------------------------------------------
+    # Derive plugin directory from the library directory (not bin — avoids double-replace)
+    string(REGEX REPLACE "[/\\\\]bin[/\\\\]?\\.\\.[/\\\\]bin$" "" _MSYS2_PREFIX "${_MSYS2_BIN_DIR}")
+    string(REGEX REPLACE "[/\\\\]bin$" "" _MSYS2_PREFIX "${_MSYS2_PREFIX}")
+    set(_GST_PLUGIN_SRC_DIR "${_MSYS2_PREFIX}/lib/gstreamer-1.0")
+
+    set(_GST_PLUGINS
+        libgstcoreelements.dll      # queue, tee, fakesink (GStreamer core)
+        libgstapp.dll               # appsrc
+        libgstvideoparsersbad.dll   # h264parse
+        libgstd3d11.dll             # d3d11h264dec, d3d11videosink
+        libgstlibav.dll             # avdec_h264, avdec_aac (FFmpeg decoders)
+        libgstvideoconvertscale.dll # videoconvert, videoscale
+        libgstaudioconvert.dll      # audioconvert
+        libgstaudioresample.dll     # audioresample
+        libgstaudioparsers.dll      # aacparse
+        libgstwasapi.dll            # wasapisink (Windows audio output)
+        libgstautodetect.dll        # autoaudiosink fallback
+    )
+
+    # Create plugins/ directory
+    add_custom_command(TARGET Reflection POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:Reflection>/plugins"
+        COMMENT "Creating GStreamer plugins directory"
+    )
+
+    foreach(_plugin ${_GST_PLUGINS})
+        set(_plugin_path "${_GST_PLUGIN_SRC_DIR}/${_plugin}")
+        if(EXISTS "${_plugin_path}")
+            add_custom_command(TARGET Reflection POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_plugin_path}"
+                    "$<TARGET_FILE_DIR:Reflection>/plugins/${_plugin}"
+            )
+        else()
+            message(WARNING "GStreamer plugin not found: ${_plugin_path}")
+        endif()
+    endforeach()
+
+    message(STATUS "GStreamer plugins will be copied from: ${_GST_PLUGIN_SRC_DIR}")
 endif()
 
 # --------------------------------------------------------------------------
@@ -432,6 +480,9 @@ if(BUILD_INSTALLER)
     set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
     set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
     set(CPACK_PACKAGE_INSTALL_DIRECTORY "Reflection")
-    set(CPACK_WIX_UPGRADE_GUID "A1B2C3D4-E5F6-7890-ABCD-EF1234567890")
+    # PERMANENT: This GUID identifies Reflection for WiX/MSI upgrades.
+    # Changing it causes Windows Installer to treat updates as separate products.
+    # Generated 2026-03-24.
+    set(CPACK_WIX_UPGRADE_GUID "BCF3A179-BA9E-4D4E-A3BB-129A81A5E57A")
     include(CPack)
 endif()
