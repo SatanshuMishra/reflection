@@ -5,19 +5,36 @@
 #endif
 #include <Windows.h>
 
+#include <functional>
+#include <memory>
+#include <string>
+
 namespace reflection {
 
-/// First-run onboarding wizard.
-/// 3-page flow: Welcome → Firewall Setup → Ready
+class WebViewHost;
+class AppSettings;
+
+/// First-run onboarding wizard with WebView2-hosted UI.
+/// 3-page flow: Welcome → Name Your Device → Firewall Setup
 ///
-/// TODO (Milestone 6): Full implementation
+/// The onboarding window is chromeless (no title bar), centered on screen,
+/// and hosts a WebView2 panel that renders the animated HTML/CSS/JS wizard.
 class OnboardingWindow {
 public:
+    using CompletionCallback = std::function<void()>;
+
     OnboardingWindow();
     ~OnboardingWindow();
 
-    /// Show the onboarding wizard. Returns true if completed successfully.
-    bool show(HINSTANCE instance);
+    // Non-copyable
+    OnboardingWindow(const OnboardingWindow&) = delete;
+    OnboardingWindow& operator=(const OnboardingWindow&) = delete;
+
+    /// Show the onboarding wizard. Blocks until completed or cancelled.
+    /// @param instance  Application instance handle
+    /// @param settings  App settings to write server name to
+    /// @return true if onboarding was completed successfully
+    bool show(HINSTANCE instance, AppSettings& settings);
 
     /// Check if onboarding has been completed (registry flag).
     static bool is_completed();
@@ -26,7 +43,19 @@ public:
     static void mark_completed();
 
 private:
+    static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg,
+                                      WPARAM wparam, LPARAM lparam);
+    void on_message_from_webview(const std::wstring& json);
+    void configure_firewall();
+
+    /// Get the absolute path to the UI assets directory.
+    static std::wstring get_assets_path();
+
     HWND hwnd_ = nullptr;
+    HINSTANCE instance_ = nullptr;
+    AppSettings* settings_ = nullptr;
+    std::unique_ptr<WebViewHost> webview_;
+    bool completed_ = false;
 };
 
 } // namespace reflection
