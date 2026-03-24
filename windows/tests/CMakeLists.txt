@@ -38,12 +38,27 @@ target_include_directories(ReflectionTests PRIVATE
 )
 
 # UxPlay path needs GStreamer includes for GStreamerPipeline.h
+# Filter out bare MSYS2 system include dirs that confuse MSVC.
 if(USE_UXPLAY)
-    target_include_directories(ReflectionTests PRIVATE
+    set(_TEST_GST_INCLUDES
         ${GST_INCLUDE_DIRS}
         ${GST_APP_INCLUDE_DIRS}
         ${GST_VIDEO_INCLUDE_DIRS}
     )
+    list(REMOVE_DUPLICATES _TEST_GST_INCLUDES)
+
+    set(_TEST_GST_FILTERED "")
+    foreach(_inc ${_TEST_GST_INCLUDES})
+        if(_inc MATCHES "gstreamer" OR _inc MATCHES "glib")
+            list(APPEND _TEST_GST_FILTERED "${_inc}")
+        endif()
+    endforeach()
+
+    if(_TEST_GST_FILTERED)
+        target_include_directories(ReflectionTests PRIVATE ${_TEST_GST_FILTERED})
+    else()
+        target_include_directories(ReflectionTests PRIVATE ${_TEST_GST_INCLUDES})
+    endif()
 endif()
 
 # Link production code objects (not the WIN32 exe — link source directly)
