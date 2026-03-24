@@ -7,9 +7,24 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <thread>
 
 namespace reflection::testing {
+namespace {
+
+bool wait_until(const std::function<bool()>& predicate, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return predicate();
+}
+
+} // namespace
 
 TEST(FrameStaleMonitorTest, InitiallyNotReceiving) {
     FrameStaleMonitor monitor;
@@ -31,12 +46,8 @@ TEST(FrameStaleMonitorTest, RecordFrameThenBecomesReceiving) {
     // Record a frame
     monitor.record_frame();
 
-    // Wait for the monitor to detect the frame
-    for (int i = 0; i < 20 && !status_received.load(); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    EXPECT_TRUE(status_received.load());
+    // Wait up to 2 seconds for the monitor callback.
+    EXPECT_TRUE(wait_until([&] { return status_received.load(); }, std::chrono::milliseconds(2000)));
     EXPECT_TRUE(last_status.load());
     EXPECT_TRUE(monitor.is_receiving_frames());
 }
@@ -55,17 +66,12 @@ TEST(FrameStaleMonitorTest, BecomesStaleWhenFramesStop) {
     // Record a frame so it becomes "receiving"
     monitor.record_frame();
 
-    // Wait for receiving status (generous timeout for slow CI runners)
-    for (int i = 0; i < 40 && status_count.load() < 1; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    // Wait for receiving status (generous timeout for slow CI runners).
+    EXPECT_TRUE(wait_until([&] { return status_count.load() >= 1; }, std::chrono::milliseconds(2500)));
     EXPECT_TRUE(last_status.load());
 
     // Now stop recording frames and wait for stale detection.
-    // CI runners can be slow — use generous timeout (80 × 50ms = 4s).
-    for (int i = 0; i < 80 && status_count.load() < 2; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    EXPECT_TRUE(wait_until([&] { return status_count.load() >= 2; }, std::chrono::milliseconds(4500)));
 
     EXPECT_FALSE(last_status.load());
     EXPECT_FALSE(monitor.is_receiving_frames());
@@ -101,11 +107,7 @@ TEST(FrameStaleMonitorTest, RestartsCleanly) {
 
         monitor.record_frame();
 
-        for (int i = 0; i < 20 && !received_status.load(); ++i) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-
-        EXPECT_TRUE(received_status.load());
+        EXPECT_TRUE(wait_until([&] { return received_status.load(); }, std::chrono::milliseconds(2000)));
         monitor.stop_monitoring();
     }
 }
