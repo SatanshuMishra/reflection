@@ -1,0 +1,380 @@
+/* Animation classes — matches macOS timing constants */
+
+/* Standard transition: 0.3s ease-in-out (from kAnimationDurationSec) */
+.transition-standard {
+    transition: all 0.3s ease-in-out;
+}
+
+/* Onboarding page transitions: 0.35s (from macOS OnboardingView) */
+.transition-onboarding {
+    transition: all 0.35s ease-in-out;
+}
+
+/* Fade in */
+.fade-in {
+    animation: fadeIn 0.3s ease-in-out forwards;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Fade out */
+.fade-out {
+    animation: fadeOut 0.3s ease-in-out forwards;
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+/* Slide in from right (forward navigation) */
+.slide-in-right {
+    animation: slideInRight 0.35s ease-in-out forwards;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(40px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Slide out to left (forward navigation) */
+.slide-out-left {
+    animation: slideOutLeft 0.35s ease-in-out forwards;
+}
+
+@keyframes slideOutLeft {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(-40px);
+        opacity: 0;
+    }
+}
+
+/* Slide in from left (back navigation) */
+.slide-in-left {
+    animation: slideInLeft 0.35s ease-in-out forwards;
+}
+
+@keyframes slideInLeft {
+    from {
+        transform: translateX(-40px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Slide out to right (back navigation) */
+.slide-out-right {
+    animation: slideOutRight 0.35s ease-in-out forwards;
+}
+
+@keyframes slideOutRight {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(40px);
+        opacity: 0;
+    }
+}
+
+/* Scale up (button press feedback) */
+.scale-up {
+    animation: scaleUp 0.2s ease-out forwards;
+}
+
+@keyframes scaleUp {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+/* Shuffle icon rotation */
+.spin {
+    animation: spin360 0.4s ease-in-out;
+}
+
+@keyframes spin360 {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Spring animation for permission card */
+.spring-in {
+    animation: springIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes springIn {
+    from {
+        transform: translateY(20px) scale(0.95);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+/* Success checkmark */
+.check-appear {
+    animation: checkAppear 0.3s ease-out forwards;
+}
+
+@keyframes checkAppear {
+    from {
+        transform: scale(0);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* ============================================================
+   Phase 7 — Polish Animations
+   ============================================================ */
+
+/* Welcome page entrance — staggered fade + slide up on first load */
+.entrance-up {
+    animation: entranceUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    opacity: 0;
+}
+
+@keyframes entranceUp {
+    from {
+        transform: translateY(24px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Stagger delays for child elements */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.12s; }
+.stagger-3 { animation-delay: 0.20s; }
+.stagger-4 { animation-delay: 0.28s; }
+.stagger-5 { animation-delay: 0.36s; }
+
+/* Connection state transition — smooth scale + color on status card */
+.connection-transition {
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+                background-color 0.3s ease-in-out,
+                border-color 0.3s ease-in-out,
+                box-shadow 0.3s ease-in-out;
+}
+
+.connection-transition.just-connected {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 2px rgba(48, 209, 88, 0.3);
+}
+
+.connection-transition.just-disconnected {
+    transform: scale(0.98);
+}
+
+/* Status dot glow effect when connected */
+.status-dot.connected {
+    box-shadow: 0 0 6px rgba(48, 209, 88, 0.5);
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* View slide transition (status window navigation) */
+.view-slide-in-right {
+    animation: viewSlideInRight 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.view-slide-out-left {
+    animation: viewSlideOutLeft 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.view-slide-in-left {
+    animation: viewSlideInLeft 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.view-slide-out-right {
+    animation: viewSlideOutRight 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes viewSlideInRight {
+    from { transform: translateX(20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes viewSlideOutLeft {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(-20px); opacity: 0; }
+}
+
+@keyframes viewSlideInLeft {
+    from { transform: translateX(-20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes viewSlideOutRight {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(20px); opacity: 0; }
+}
+
+/* Loading spinner for async operations */
+.spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--text-tertiary);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spinLoader 0.6s linear infinite;
+    display: inline-block;
+}
+
+@keyframes spinLoader {
+    to { transform: rotate(360deg); }
+}
+
+/* Firewall feature list staggered entrance */
+.feature-enter {
+    animation: featureEnter 0.35s ease-out forwards;
+    opacity: 0;
+}
+
+@keyframes featureEnter {
+    from {
+        transform: translateX(-12px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Name save success flash */
+.save-flash {
+    animation: saveFlash 0.5s ease-out;
+}
+
+@keyframes saveFlash {
+    0% { box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.4); }
+    50% { box-shadow: 0 0 0 4px rgba(48, 209, 88, 0.2); }
+    100% { box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); }
+}
+
+/* Error shake */
+.shake {
+    animation: shake 0.4s ease-out;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+}
+
+/* Firewall status bar slide-in */
+.status-slide-in {
+    animation: statusSlideIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes statusSlideIn {
+    from {
+        transform: translateY(-8px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Toolbar title crossfade */
+.title-crossfade {
+    animation: titleCrossfade 0.25s ease-in-out;
+}
+
+@keyframes titleCrossfade {
+    0% { opacity: 0; transform: translateY(-4px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Button ripple on click */
+.btn-primary:active,
+.btn-secondary:active {
+    transition: transform 0.1s ease;
+}
+
+/* Segmented control indicator slide */
+.segmented-option {
+    transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.segmented-option.active {
+    transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Toggle switch spring */
+.toggle-track::after {
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Edit name transition */
+.name-edit-enter {
+    animation: nameEditEnter 0.25s ease-out forwards;
+}
+
+@keyframes nameEditEnter {
+    from {
+        transform: translateY(-8px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+/* Disconnect button entrance */
+.disconnect-enter {
+    animation: disconnectEnter 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes disconnectEnter {
+    from {
+        transform: scale(0.9);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* ============================================================
+   Reduced Motion — respect user preference (WCAG 2.3.3)
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
