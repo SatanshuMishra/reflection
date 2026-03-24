@@ -12,6 +12,7 @@ constexpr std::wstring_view kAppName = L"Reflection";
 constexpr std::wstring_view kAppWindowClass = L"ReflectionMainClass";
 constexpr std::wstring_view kMirrorWindowClass = L"ReflectionMirrorClass";
 constexpr std::wstring_view kOnboardingWindowClass = L"ReflectionOnboardingClass";
+constexpr std::wstring_view kStatusWindowClass = L"ReflectionStatusClass";
 
 // --------------------------------------------------------------------------
 // AirPlay Configuration
@@ -63,6 +64,9 @@ constexpr double kDefaultAspectRatio = 4.0 / 3.0;
 constexpr int kOnboardingWidth = 800;
 constexpr int kOnboardingHeight = 600;
 
+constexpr int kStatusWindowWidth = 420;
+constexpr int kStatusWindowHeight = 400;
+
 // --------------------------------------------------------------------------
 // Colors (matching macOS app: near-black #121215)
 // --------------------------------------------------------------------------
@@ -100,6 +104,7 @@ constexpr std::wstring_view kRegKeyServerName = L"ServerName";
 constexpr std::wstring_view kRegKeyStartOnLogin = L"StartOnLogin";
 constexpr std::wstring_view kRegKeyMinimizeToTray = L"MinimizeToTray";
 constexpr std::wstring_view kRegKeyOnboardingCompleted = L"OnboardingCompleted";
+constexpr std::wstring_view kRegKeyTheme = L"Theme";
 constexpr std::wstring_view kRegKeyMirrorWindowX = L"MirrorWindowX";
 constexpr std::wstring_view kRegKeyMirrorWindowY = L"MirrorWindowY";
 constexpr std::wstring_view kRegKeyMirrorWindowW = L"MirrorWindowWidth";
@@ -135,6 +140,9 @@ constexpr uint32_t kWmTrayIcon = 0x8000 + 1; // WM_APP + 1
 constexpr uint32_t kWmIpadConnected = 0x8000 + 2;       // WM_APP + 2
 constexpr uint32_t kWmIpadDisconnected = 0x8000 + 3;     // WM_APP + 3
 constexpr uint32_t kWmMirrorWindowClosed = 0x8000 + 4;   // WM_APP + 4
+constexpr uint32_t kWmThemeChanged = 0x8000 + 5;          // WM_APP + 5
+constexpr uint32_t kWmOnboardingComplete = 0x8000 + 6;    // WM_APP + 6
+constexpr uint32_t kWmServerNameChanged = 0x8000 + 7;     // WM_APP + 7
 
 // --------------------------------------------------------------------------
 // Render Timer

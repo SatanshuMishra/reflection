@@ -45,6 +45,11 @@ public:
     /// Stop the AirPlay receiver and clean up all subsystems.
     void stop();
 
+    /// Restart the service with a new configuration.
+    /// Stops the current service, then starts with the new config.
+    /// Preserves existing callbacks.
+    [[nodiscard]] bool restart(const AirPlayServiceConfig& config);
+
     /// Whether the service is currently running.
     [[nodiscard]] bool is_running() const;
 

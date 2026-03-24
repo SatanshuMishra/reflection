@@ -34,6 +34,22 @@ void AppSettings::set_minimize_to_tray(bool enabled) {
     write_bool(constants::kRegKeyMinimizeToTray.data(), enabled);
 }
 
+std::string AppSettings::theme() const {
+    std::wstring wtheme = read_string(constants::kRegKeyTheme.data(), L"system");
+    // Convert wstring to string (ASCII-safe for theme values)
+    std::string result;
+    result.reserve(wtheme.size());
+    for (wchar_t c : wtheme) {
+        result += static_cast<char>(c);
+    }
+    return result;
+}
+
+void AppSettings::set_theme(const std::string& theme) {
+    std::wstring wtheme(theme.begin(), theme.end());
+    write_string(constants::kRegKeyTheme.data(), wtheme);
+}
+
 // -- Registry helpers --
 
 std::wstring AppSettings::read_string(

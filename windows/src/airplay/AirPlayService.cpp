@@ -86,6 +86,12 @@ void AirPlayService::stop() {
     Logger::info("AirPlay service stopped");
 }
 
+bool AirPlayService::restart(const AirPlayServiceConfig& config) {
+    Logger::info("Restarting AirPlay service with new name '{}'", config.server_name);
+    stop();
+    return start(config);
+}
+
 bool AirPlayService::is_running() const {
     return running_;
 }

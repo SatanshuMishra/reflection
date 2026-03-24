@@ -14,9 +14,12 @@
 namespace reflection {
 
 class AirPlayService;
+class AppSettings;
 class IGStreamerPipeline;
 class MirrorWindow;
+class StatusWindow;
 class SystemTray;
+class ThemeManager;
 struct AirPlayClientInfo;
 
 /// Main application class.
@@ -40,7 +43,10 @@ private:
     HINSTANCE instance_;
     HWND message_hwnd_ = nullptr;
 
+    std::unique_ptr<AppSettings> settings_;
     std::unique_ptr<SystemTray> system_tray_;
+    std::unique_ptr<StatusWindow> status_window_;
+    std::unique_ptr<ThemeManager> theme_manager_;
     std::unique_ptr<MirrorWindow> mirror_window_;
     std::unique_ptr<AirPlayService> airplay_service_;
     std::unique_ptr<IGStreamerPipeline> pipeline_;
@@ -56,6 +62,7 @@ private:
     void on_ipad_connected();
     void on_ipad_disconnected();
     void on_mirror_window_closed();
+    void on_server_name_changed();
     void cleanup_mirror_session();
 
     static LRESULT CALLBACK message_wnd_proc(
