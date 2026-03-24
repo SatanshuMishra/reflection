@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Satanshu Mishra
+
 #include "airplay/AirPlayService.h"
 #include "mdns/MdnsServiceRecord.h"
 #include "utilities/Logger.h"

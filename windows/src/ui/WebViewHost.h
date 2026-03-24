@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Satanshu Mishra
+
 #pragma once
 
 #ifndef WIN32_LEAN_AND_MEAN
