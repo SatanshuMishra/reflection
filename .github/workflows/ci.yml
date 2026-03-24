@@ -42,26 +42,19 @@ jobs:
 
       - name: Install GStreamer MSVC
         if: steps.cache-gstreamer.outputs.cache-hit != 'true'
-        shell: pwsh
+        shell: bash
         run: |
-          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc/gstreamer-1.0-msvc-x86_64-1.22.12.msi"
-          $msi = "$env:RUNNER_TEMP\gstreamer.msi"
-          $devUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc/gstreamer-1.0-devel-msvc-x86_64-1.22.12.msi"
-          $devMsi = "$env:RUNNER_TEMP\gstreamer-devel.msi"
-          for ($i = 1; $i -le 5; $i++) {
-            try {
-              Write-Host "Download attempt $i/5..."
-              Invoke-WebRequest -Uri $url -OutFile $msi -TimeoutSec 120
-              Invoke-WebRequest -Uri $devUrl -OutFile $devMsi -TimeoutSec 120
-              break
-            } catch {
-              Write-Warning "Attempt $i failed: $_"
-              if ($i -eq 5) { throw "Failed to download GStreamer after 5 attempts" }
-              Start-Sleep -Seconds (10 * $i)
-            }
-          }
-          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn INSTALLDIR=D:\gstreamer" -Wait -NoNewWindow
-          Start-Process msiexec.exe -ArgumentList "/i `"$devMsi`" /qn INSTALLDIR=D:\gstreamer" -Wait -NoNewWindow
+          BASE="https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc"
+          RUNTIME="gstreamer-1.0-msvc-x86_64-1.22.12.msi"
+          DEVEL="gstreamer-1.0-devel-msvc-x86_64-1.22.12.msi"
+          for f in "$RUNTIME" "$DEVEL"; do
+            echo "Downloading $f..."
+            curl -L --retry 5 --retry-delay 10 --retry-max-time 300 \
+                 --connect-timeout 30 --max-time 300 \
+                 -o "$RUNNER_TEMP/$f" "$BASE/$f"
+          done
+          cmd.exe //c "msiexec /i \"$RUNNER_TEMP\\$RUNTIME\" /qn INSTALLDIR=D:\\gstreamer"
+          cmd.exe //c "msiexec /i \"$RUNNER_TEMP\\$DEVEL\" /qn INSTALLDIR=D:\\gstreamer"
 
       - name: Save GStreamer MSVC cache
         if: steps.cache-gstreamer.outputs.cache-hit != 'true'

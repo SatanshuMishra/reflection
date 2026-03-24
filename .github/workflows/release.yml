@@ -143,38 +143,34 @@ jobs:
 
       - name: Install GStreamer MSVC
         if: steps.cache-gstreamer.outputs.cache-hit != 'true'
-        shell: pwsh
+        shell: bash
         run: |
-          # Download GStreamer MSI with retry logic (CDN can be flaky)
-          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc/gstreamer-1.0-msvc-x86_64-1.22.12.msi"
-          $msi = "$env:RUNNER_TEMP\gstreamer.msi"
-          $devUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc/gstreamer-1.0-devel-msvc-x86_64-1.22.12.msi"
-          $devMsi = "$env:RUNNER_TEMP\gstreamer-devel.msi"
+          # Download GStreamer MSI with curl (PowerShell Invoke-WebRequest fails on Actions)
+          BASE="https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc"
+          RUNTIME="gstreamer-1.0-msvc-x86_64-1.22.12.msi"
+          DEVEL="gstreamer-1.0-devel-msvc-x86_64-1.22.12.msi"
 
-          for ($i = 1; $i -le 5; $i++) {
-            try {
-              Write-Host "Download attempt $i/5 (runtime)..."
-              Invoke-WebRequest -Uri $url -OutFile $msi -TimeoutSec 120
-              Write-Host "Download attempt $i/5 (devel)..."
-              Invoke-WebRequest -Uri $devUrl -OutFile $devMsi -TimeoutSec 120
-              break
-            } catch {
-              Write-Warning "Attempt $i failed: $_"
-              if ($i -eq 5) { throw "Failed to download GStreamer after 5 attempts" }
-              Start-Sleep -Seconds (10 * $i)
-            }
-          }
+          for f in "$RUNTIME" "$DEVEL"; do
+            echo "Downloading $f..."
+            curl -L --retry 5 --retry-delay 10 --retry-max-time 300 \
+                 --connect-timeout 30 --max-time 300 \
+                 -o "$RUNNER_TEMP/$f" "$BASE/$f"
+            echo "Downloaded: $(stat -c%s "$RUNNER_TEMP/$f" 2>/dev/null || echo 'unknown') bytes"
+          done
 
-          # Install to D:\gstreamer (non-default to avoid conflicts)
-          Write-Host "Installing GStreamer runtime..."
-          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn INSTALLDIR=D:\gstreamer" -Wait -NoNewWindow
-          Write-Host "Installing GStreamer devel..."
-          Start-Process msiexec.exe -ArgumentList "/i `"$devMsi`" /qn INSTALLDIR=D:\gstreamer" -Wait -NoNewWindow
+          # Install both MSIs to D:\gstreamer
+          echo "Installing GStreamer runtime..."
+          cmd.exe //c "msiexec /i \"$RUNNER_TEMP\\$RUNTIME\" /qn INSTALLDIR=D:\\gstreamer"
+          echo "Installing GStreamer devel..."
+          cmd.exe //c "msiexec /i \"$RUNNER_TEMP\\$DEVEL\" /qn INSTALLDIR=D:\\gstreamer"
 
-          if (-not (Test-Path "D:\gstreamer\1.0\msvc_x86_64\bin\gstreamer-1.0-0.dll")) {
-            throw "GStreamer installation verification failed"
-          }
-          Write-Host "GStreamer 1.22.12 installed successfully"
+          # Verify
+          if [ ! -f "D:/gstreamer/1.0/msvc_x86_64/bin/gstreamer-1.0-0.dll" ]; then
+            echo "ERROR: GStreamer installation verification failed"
+            ls -la D:/gstreamer/ 2>/dev/null || echo "D:/gstreamer/ does not exist"
+            exit 1
+          fi
+          echo "GStreamer 1.22.12 installed successfully"
 
       - name: Save GStreamer MSVC cache
         if: steps.cache-gstreamer.outputs.cache-hit != 'true'
