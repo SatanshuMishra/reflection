@@ -144,6 +144,7 @@ constexpr uint32_t kWmThemeChanged = 0x8000 + 5;          // WM_APP + 5
 constexpr uint32_t kWmOnboardingComplete = 0x8000 + 6;    // WM_APP + 6
 constexpr uint32_t kWmServerNameChanged = 0x8000 + 7;     // WM_APP + 7
 constexpr uint32_t kWmFirewallGranted = 0x8000 + 8;       // WM_APP + 8
+constexpr uint32_t kWmForceReannounce = 0x8000 + 9;      // WM_APP + 9
 
 // --------------------------------------------------------------------------
 // Render Timer

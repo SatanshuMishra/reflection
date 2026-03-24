@@ -22,6 +22,10 @@ public:
     /// Withdraw all advertised services.
     virtual void withdraw_all() = 0;
 
+    /// Force an immediate mDNS re-announcement burst for all services.
+    /// Use after disconnect/reconnect to ensure iPads rediscover quickly.
+    virtual void force_reannounce() = 0;
+
     /// Whether any services are currently being advertised.
     [[nodiscard]] virtual bool is_advertising() const = 0;
 

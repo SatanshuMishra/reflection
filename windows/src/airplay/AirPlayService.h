@@ -53,6 +53,10 @@ public:
     /// Whether the service is currently running.
     [[nodiscard]] bool is_running() const;
 
+    /// Trigger an immediate mDNS re-announcement burst.
+    /// Use after disconnect/reconnect to help iPads rediscover quickly.
+    void force_reannounce();
+
     // --- Callback setters (call before start()) ---
 
     void set_client_connected_callback(ClientConnectedCallback callback);

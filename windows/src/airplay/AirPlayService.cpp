@@ -96,6 +96,12 @@ bool AirPlayService::is_running() const {
     return running_;
 }
 
+void AirPlayService::force_reannounce() {
+    if (running_ && mdns_) {
+        mdns_->force_reannounce();
+    }
+}
+
 void AirPlayService::set_client_connected_callback(ClientConnectedCallback callback) {
     client_connected_cb_ = std::move(callback);
 }
