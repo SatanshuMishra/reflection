@@ -159,10 +159,14 @@ jobs:
           done
 
           # Install both MSIs to D:\gstreamer
-          echo "Installing GStreamer runtime..."
-          cmd.exe //c "msiexec /i \"$RUNNER_TEMP\\$RUNTIME\" /qn INSTALLDIR=D:\\gstreamer"
-          echo "Installing GStreamer devel..."
-          cmd.exe //c "msiexec /i \"$RUNNER_TEMP\\$DEVEL\" /qn INSTALLDIR=D:\\gstreamer"
+          # Convert bash paths to Windows paths for msiexec
+          RUNTIME_PATH=$(cygpath -w "$RUNNER_TEMP/$RUNTIME")
+          DEVEL_PATH=$(cygpath -w "$RUNNER_TEMP/$DEVEL")
+
+          echo "Installing GStreamer runtime from: $RUNTIME_PATH"
+          msiexec //i "$RUNTIME_PATH" //qn INSTALLDIR=D:\\gstreamer
+          echo "Installing GStreamer devel from: $DEVEL_PATH"
+          msiexec //i "$DEVEL_PATH" //qn INSTALLDIR=D:\\gstreamer
 
           # Verify
           if [ ! -f "D:/gstreamer/1.0/msvc_x86_64/bin/gstreamer-1.0-0.dll" ]; then
