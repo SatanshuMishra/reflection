@@ -188,6 +188,51 @@ jobs:
           $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
           ctest --test-dir build -C Release --output-on-failure
 
+      - name: Bundle GStreamer runtime
+        shell: pwsh
+        run: |
+          $gstBin = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin"
+          $gstPlugins = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\lib\gstreamer-1.0"
+          $buildDir = "windows\build\Release"
+
+          # Core GStreamer DLLs needed at runtime
+          $dlls = @(
+            "gstreamer-1.0-0.dll", "gstapp-1.0-0.dll", "gstvideo-1.0-0.dll",
+            "gstbase-1.0-0.dll", "gstcodecparsers-1.0-0.dll", "gstpbutils-1.0-0.dll",
+            "gstaudio-1.0-0.dll", "gsttag-1.0-0.dll",
+            "glib-2.0-0.dll", "gobject-2.0-0.dll", "gmodule-2.0-0.dll",
+            "intl-8.dll", "ffi-8.dll", "pcre2-8-0.dll", "orc-0.4-0.dll",
+            "z1.dll", "gio-2.0-0.dll"
+          )
+          foreach ($dll in $dlls) {
+            $src = Join-Path $gstBin $dll
+            if (Test-Path $src) {
+              Copy-Item $src "$buildDir\" -Force
+              Write-Host "Copied: $dll"
+            } else {
+              Write-Warning "Not found: $src"
+            }
+          }
+
+          # GStreamer plugin DLLs
+          $plugins = @(
+            "gstcoreelements.dll", "gstapp.dll", "gstvideoparsersbad.dll",
+            "gstd3d11.dll", "gstlibav.dll", "gstvideoconvertscale.dll",
+            "gstaudioconvert.dll", "gstaudioresample.dll", "gstaudioparsers.dll",
+            "gstwasapi.dll", "gstautodetect.dll"
+          )
+          $pluginDir = "$buildDir\plugins"
+          New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null
+          foreach ($plugin in $plugins) {
+            $src = Join-Path $gstPlugins $plugin
+            if (Test-Path $src) {
+              Copy-Item $src "$pluginDir\" -Force
+              Write-Host "Copied plugin: $plugin"
+            } else {
+              Write-Warning "Plugin not found: $src"
+            }
+          }
+
       - name: Extract version from tag
         id: version
         shell: bash

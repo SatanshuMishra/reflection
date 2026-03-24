@@ -65,8 +65,8 @@ Source: "{#BuildDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; GStreamer runtime DLLs (co-located with exe)
 Source: "{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 
-; GStreamer plugin DLLs
-Source: "{#BuildDir}\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: DirExists(ExpandConstant('{#BuildDir}\plugins'))
+; GStreamer plugin DLLs (only present in MSYS2 local builds, not CI MSVC builds)
+Source: "{#BuildDir}\plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 ; UI assets (WebView2 HTML/CSS/JS)
 Source: "{#BuildDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
