@@ -75,6 +75,13 @@ void MjanssonMdnsAdvertiser::withdraw(const std::string& service_type) {
     }
 }
 
+void MjanssonMdnsAdvertiser::force_reannounce() {
+    std::lock_guard lock(mutex_);
+    for (const auto& record : records_) {
+        send_announcement(record);
+    }
+}
+
 void MjanssonMdnsAdvertiser::withdraw_all() {
     {
         std::lock_guard lock(mutex_);

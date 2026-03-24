@@ -302,6 +302,21 @@ void NativeMdnsAdvertiser::withdraw(const std::string& service_type) {
     }
 }
 
+void NativeMdnsAdvertiser::force_reannounce() {
+    std::vector<MdnsServiceRecord> snapshot;
+    {
+        std::lock_guard lock(mutex_);
+        snapshot = records_;
+    }
+
+    if (snapshot.empty()) return;
+
+    Logger::info("Force re-announcing {} mDNS services", snapshot.size());
+    for (const auto& record : snapshot) {
+        send_announcement(record);
+    }
+}
+
 void NativeMdnsAdvertiser::withdraw_all() {
     std::vector<MdnsServiceRecord> snapshot;
     {

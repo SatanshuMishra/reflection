@@ -264,6 +264,36 @@ function closeWindow() {
     });
 })();
 
+// --- Broadcast (manual mDNS re-announce with rate limiter) ---
+
+var lastBroadcastTime = 0;
+var BROADCAST_COOLDOWN_MS = 10000; // 10-second cooldown
+
+function triggerBroadcast() {
+    var now = Date.now();
+    var elapsed = now - lastBroadcastTime;
+
+    if (elapsed < BROADCAST_COOLDOWN_MS) {
+        // Rate limited -- show cooldown feedback
+        var btn = document.getElementById('broadcastBtn');
+        btn.classList.add('shake');
+        setTimeout(function() { btn.classList.remove('shake'); }, 400);
+        return;
+    }
+
+    lastBroadcastTime = now;
+    sendToHost({ type: 'forceReannounce' });
+
+    // Visual feedback: spin the broadcast icon
+    var btn = document.getElementById('broadcastBtn');
+    btn.classList.add('spin');
+    btn.disabled = true;
+    setTimeout(function() {
+        btn.classList.remove('spin');
+        btn.disabled = false;
+    }, 1000);
+}
+
 // --- Firewall Banner ---
 
 function updateFirewallBanner(show) {

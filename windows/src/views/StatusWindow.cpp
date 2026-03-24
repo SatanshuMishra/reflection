@@ -350,6 +350,11 @@ void StatusWindow::on_message_from_webview(const std::wstring& json_w) {
     } else if (type == "startDrag") {
         ReleaseCapture();
         PostMessage(hwnd_, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+    } else if (type == "forceReannounce") {
+        Logger::info("Manual broadcast triggered from UI");
+        if (message_hwnd_) {
+            PostMessage(message_hwnd_, constants::kWmForceReannounce, 0, 0);
+        }
     }
 }
 

@@ -35,6 +35,7 @@ public:
     [[nodiscard]] bool advertise(const MdnsServiceRecord& record) override;
     void withdraw(const std::string& service_type) override;
     void withdraw_all() override;
+    void force_reannounce() override;
     [[nodiscard]] bool is_advertising() const override;
     [[nodiscard]] std::vector<std::string> advertised_services() const override;
 
