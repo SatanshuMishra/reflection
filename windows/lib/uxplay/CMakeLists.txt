@@ -94,28 +94,36 @@ if(NOT uxplay_POPULATED)
 
     # Patch raop.c — add raop_get_pk_str() to expose the generated public key.
     # Our mDNS advertiser needs this to send the correct pk in TXT records.
+    # Guard: only apply if not already patched.
     set(_raop_c_file "${_uxplay_lib_dir}/raop.c")
     if(EXISTS "${_raop_c_file}")
         file(READ "${_raop_c_file}" _raop_c_content)
-        # Add getter after raop_get_callback_cls
-        string(REPLACE
-            "void *\nraop_get_callback_cls(raop_t *raop) {\n    assert(raop);\n    return raop->callbacks.cls;\n}"
-            "void *\nraop_get_callback_cls(raop_t *raop) {\n    assert(raop);\n    return raop->callbacks.cls;\n}\n\nconst char *\nraop_get_pk_str(raop_t *raop) {\n    assert(raop);\n    return raop->pk_str;\n}"
-            _raop_c_content "${_raop_c_content}")
-        file(WRITE "${_raop_c_file}" "${_raop_c_content}")
-        message(STATUS "Patched raop.c: added raop_get_pk_str()")
+        if(NOT _raop_c_content MATCHES "raop_get_pk_str")
+            string(REPLACE
+                "void *\nraop_get_callback_cls(raop_t *raop) {\n    assert(raop);\n    return raop->callbacks.cls;\n}"
+                "void *\nraop_get_callback_cls(raop_t *raop) {\n    assert(raop);\n    return raop->callbacks.cls;\n}\n\nconst char *\nraop_get_pk_str(raop_t *raop) {\n    assert(raop);\n    return raop->pk_str;\n}"
+                _raop_c_content "${_raop_c_content}")
+            file(WRITE "${_raop_c_file}" "${_raop_c_content}")
+            message(STATUS "Patched raop.c: added raop_get_pk_str()")
+        else()
+            message(STATUS "raop.c: raop_get_pk_str already present (skipping patch)")
+        endif()
     endif()
 
     # Patch raop.h — declare raop_get_pk_str
     set(_raop_h_file "${_uxplay_lib_dir}/raop.h")
     if(EXISTS "${_raop_h_file}")
         file(READ "${_raop_h_file}" _raop_h_content)
-        string(REPLACE
-            "RAOP_API void *raop_get_callback_cls(raop_t *raop);"
-            "RAOP_API void *raop_get_callback_cls(raop_t *raop);\nRAOP_API const char *raop_get_pk_str(raop_t *raop);"
-            _raop_h_content "${_raop_h_content}")
-        file(WRITE "${_raop_h_file}" "${_raop_h_content}")
-        message(STATUS "Patched raop.h: declared raop_get_pk_str()")
+        if(NOT _raop_h_content MATCHES "raop_get_pk_str")
+            string(REPLACE
+                "RAOP_API void *raop_get_callback_cls(raop_t *raop);"
+                "RAOP_API void *raop_get_callback_cls(raop_t *raop);\nRAOP_API const char *raop_get_pk_str(raop_t *raop);"
+                _raop_h_content "${_raop_h_content}")
+            file(WRITE "${_raop_h_file}" "${_raop_h_content}")
+            message(STATUS "Patched raop.h: declared raop_get_pk_str()")
+        else()
+            message(STATUS "raop.h: raop_get_pk_str already declared (skipping patch)")
+        endif()
     endif()
 
     # Also patch raop.c if it has uninitialized mutexes
@@ -243,25 +251,33 @@ endif()
 
 # Detect libplist version for API compatibility.
 # libplist 2.1.0+ changed plist_get_data_val() signature.
-# UxPlay uses #ifdef PLIST_210 to handle this.
-if(PkgConfig_FOUND)
-    pkg_check_modules(PLIST_VER QUIET libplist-2.0>=2.1.0)
-    if(PLIST_VER_FOUND)
-        message(STATUS "libplist >= 2.1.0 detected — defining PLIST_210")
+# libplist 2.3.0+ exports plist_mem_free() (no local static needed).
+# UxPlay uses #ifdef PLIST_210 / PLIST_230 to handle this.
+#
+# vcpkg ships libplist 2.7.0+ but its .pc file isn't always visible
+# to pkg-config (especially when mixing vcpkg + MSYS2).
+# Check the header directly for the reliable 2.3.0+ indicator.
+set(PLIST_210_DEF "")
+set(PLIST_230_DEF "")
+if(PLIST_INCLUDE_DIR)
+    # plist 2.3.0+ declares plist_mem_free as PLIST_API in the header
+    file(STRINGS "${PLIST_INCLUDE_DIR}/plist/plist.h" _plist_memfree_lines
+         REGEX "PLIST_API.*plist_mem_free")
+    if(_plist_memfree_lines)
+        message(STATUS "libplist >= 2.3.0 detected (plist_mem_free is PLIST_API) — defining PLIST_210 PLIST_230")
         set(PLIST_210_DEF "PLIST_210")
-    else()
-        set(PLIST_210_DEF "")
-    endif()
-    # Also check for >= 2.3.0 (further API changes)
-    pkg_check_modules(PLIST_230 QUIET libplist-2.0>=2.3.0)
-    if(PLIST_230_FOUND)
-        message(STATUS "libplist >= 2.3.0 detected — defining PLIST_230")
         set(PLIST_230_DEF "PLIST_230")
     else()
-        set(PLIST_230_DEF "")
+        # Check for 2.1.0+ by looking for plist_get_data_val with uint64_t
+        file(STRINGS "${PLIST_INCLUDE_DIR}/plist/plist.h" _plist_data_lines
+             REGEX "plist_get_data_val.*uint64_t")
+        if(_plist_data_lines)
+            message(STATUS "libplist >= 2.1.0 detected — defining PLIST_210")
+            set(PLIST_210_DEF "PLIST_210")
+        endif()
     endif()
 else()
-    # Assume modern libplist if pkg-config unavailable (vcpkg ships 2.7.0+)
+    # Assume modern libplist if include dir unavailable (vcpkg ships 2.7.0+)
     set(PLIST_210_DEF "PLIST_210")
     set(PLIST_230_DEF "PLIST_230")
 endif()

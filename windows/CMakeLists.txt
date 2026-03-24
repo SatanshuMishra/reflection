@@ -18,6 +18,56 @@ option(USE_UXPLAY "Use UxPlay instead of RPiPlay for AirPlay protocol" ON)
 # vcpkg integration (auto-detected via CMAKE_TOOLCHAIN_FILE)
 find_package(OpenSSL REQUIRED)
 
+# --------------------------------------------------------------------------
+# WebView2 SDK — for modern UI panels (onboarding, settings, status window)
+# The WebView2 Evergreen runtime is pre-installed on Windows 10/11.
+#
+# Download the NuGet package at configure time if not already present.
+# The .nupkg is a zip file containing headers and static lib.
+# --------------------------------------------------------------------------
+set(WEBVIEW2_VERSION "1.0.2903.40")
+set(WEBVIEW2_DIR "${CMAKE_CURRENT_BINARY_DIR}/webview2-sdk")
+set(WEBVIEW2_INCLUDE_DIR "${WEBVIEW2_DIR}/build/native/include")
+set(WEBVIEW2_LIB_DIR "${WEBVIEW2_DIR}/build/native/x64")
+
+if(NOT EXISTS "${WEBVIEW2_INCLUDE_DIR}/WebView2.h")
+    set(_wv2_nupkg "${CMAKE_CURRENT_BINARY_DIR}/webview2.nupkg")
+    if(NOT EXISTS "${_wv2_nupkg}")
+        message(STATUS "Downloading WebView2 SDK ${WEBVIEW2_VERSION}...")
+        file(DOWNLOAD
+            "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/${WEBVIEW2_VERSION}"
+            "${_wv2_nupkg}"
+            SHOW_PROGRESS
+            STATUS _dl_status
+        )
+        list(GET _dl_status 0 _dl_code)
+        if(NOT _dl_code EQUAL 0)
+            message(FATAL_ERROR "Failed to download WebView2 SDK: ${_dl_status}")
+        endif()
+    endif()
+    message(STATUS "Extracting WebView2 SDK...")
+    file(ARCHIVE_EXTRACT INPUT "${_wv2_nupkg}" DESTINATION "${WEBVIEW2_DIR}")
+endif()
+
+if(NOT EXISTS "${WEBVIEW2_INCLUDE_DIR}/WebView2.h")
+    # Search for headers in case of different package layout
+    file(GLOB_RECURSE _wv2_headers "${WEBVIEW2_DIR}/**/WebView2.h")
+    if(_wv2_headers)
+        list(GET _wv2_headers 0 _wv2_hdr)
+        get_filename_component(WEBVIEW2_INCLUDE_DIR "${_wv2_hdr}" DIRECTORY)
+    else()
+        message(FATAL_ERROR "WebView2.h not found after extraction")
+    endif()
+    file(GLOB_RECURSE _wv2_libs "${WEBVIEW2_DIR}/**/WebView2LoaderStatic.lib")
+    if(_wv2_libs)
+        list(GET _wv2_libs 0 _wv2_lpath)
+        get_filename_component(WEBVIEW2_LIB_DIR "${_wv2_lpath}" DIRECTORY)
+    endif()
+endif()
+
+message(STATUS "WebView2 SDK: ${WEBVIEW2_INCLUDE_DIR}")
+message(STATUS "WebView2 lib: ${WEBVIEW2_LIB_DIR}")
+
 # libplist — required by RPiPlay for AirPlay RTSP plist parsing
 find_path(PLIST_INCLUDE_DIR NAMES plist/plist.h)
 find_library(PLIST_LIBRARY NAMES plist plist-2.0 libplist libplist-2.0)
@@ -119,11 +169,15 @@ set(REFLECTION_SOURCES
     src/mdns/NativeMdnsAdvertiser.cpp
     src/views/MirrorWindow.cpp
     src/views/OnboardingWindow.cpp
+    src/views/StatusWindow.cpp
     src/views/OverlayRenderer.cpp
     src/settings/AppSettings.cpp
     src/settings/AutoStartService.cpp
     src/utilities/Logger.cpp
     src/utilities/UpdateChecker.cpp
+    src/utilities/NameGenerator.cpp
+    src/ui/WebViewHost.cpp
+    src/ui/ThemeManager.cpp
 )
 
 # Add the appropriate AirPlay core wrapper and pipeline
@@ -144,19 +198,44 @@ else()
     )
 endif()
 
-add_executable(Reflection WIN32 ${REFLECTION_SOURCES})
+# Windows resource file (application icon)
+set(REFLECTION_RC "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app.rc")
+
+add_executable(Reflection WIN32 ${REFLECTION_SOURCES} ${REFLECTION_RC})
 
 target_include_directories(Reflection PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${WEBVIEW2_INCLUDE_DIR}
 )
 
 # GStreamer include directories
+# Filter out MSYS2 system-wide include paths (e.g., C:/msys64/ucrt64/include)
+# that pkg-config injects — MSVC cannot parse GCC-specific headers from those paths.
+# We only need the GStreamer-specific include dirs (gstreamer-1.0/, glib-2.0/).
 if(USE_UXPLAY)
-    target_include_directories(Reflection PRIVATE
+    set(_GST_ALL_INCLUDES
         ${GST_INCLUDE_DIRS}
         ${GST_APP_INCLUDE_DIRS}
         ${GST_VIDEO_INCLUDE_DIRS}
     )
+    list(REMOVE_DUPLICATES _GST_ALL_INCLUDES)
+
+    set(_GST_FILTERED_INCLUDES "")
+    foreach(_inc ${_GST_ALL_INCLUDES})
+        # Keep only GStreamer/GLib-specific include paths, skip bare system dirs
+        if(_inc MATCHES "gstreamer" OR _inc MATCHES "glib")
+            list(APPEND _GST_FILTERED_INCLUDES "${_inc}")
+        endif()
+    endforeach()
+
+    if(_GST_FILTERED_INCLUDES)
+        target_include_directories(Reflection PRIVATE ${_GST_FILTERED_INCLUDES})
+        message(STATUS "GStreamer includes (filtered): ${_GST_FILTERED_INCLUDES}")
+    else()
+        # Fallback: use all includes if none matched the filter
+        target_include_directories(Reflection PRIVATE ${_GST_ALL_INCLUDES})
+        message(WARNING "GStreamer include filter matched nothing — using all: ${_GST_ALL_INCLUDES}")
+    endif()
 endif()
 
 target_link_libraries(Reflection PRIVATE
@@ -167,6 +246,9 @@ target_link_libraries(Reflection PRIVATE
     # vcpkg dependencies
     OpenSSL::SSL
     OpenSSL::Crypto
+
+    # WebView2 (static loader — no DLL dependency)
+    ${WEBVIEW2_LIB_DIR}/WebView2LoaderStatic.lib
 
     # Windows system libraries (always needed)
     ws2_32
@@ -195,16 +277,38 @@ endif()
 
 # Link GStreamer libraries
 if(USE_UXPLAY)
-    target_link_libraries(Reflection PRIVATE
-        ${GST_LIBRARIES}
-        ${GST_APP_LIBRARIES}
-        ${GST_VIDEO_LIBRARIES}
-    )
-    target_link_directories(Reflection PRIVATE
-        ${GST_LIBRARY_DIRS}
-        ${GST_APP_LIBRARY_DIRS}
-        ${GST_VIDEO_LIBRARY_DIRS}
-    )
+    if(MSVC AND GST_LIBRARY_DIRS MATCHES "msys64")
+        # MSVC cannot link against MSYS2/MinGW .dll.a libraries directly.
+        # Use the full paths to the .dll.a files — MSVC can handle them
+        # when given as full paths (it delegates to the librarian).
+        # If this fails, install GStreamer MSVC from:
+        #   https://gstreamer.freedesktop.org/download/
+        set(_GST_LINK_LIBS "")
+        set(_GST_LIB_DIR "${GST_LIBRARY_DIRS}")
+        foreach(_lib gstreamer-1.0 gstapp-1.0 gstbase-1.0 gstvideo-1.0
+                     gobject-2.0 glib-2.0 intl)
+            if(EXISTS "${_GST_LIB_DIR}/lib${_lib}.dll.a")
+                list(APPEND _GST_LINK_LIBS "${_GST_LIB_DIR}/lib${_lib}.dll.a")
+            elseif(EXISTS "${_GST_LIB_DIR}/lib${_lib}.a")
+                list(APPEND _GST_LINK_LIBS "${_GST_LIB_DIR}/lib${_lib}.a")
+            else()
+                message(WARNING "GStreamer lib not found: ${_lib}")
+            endif()
+        endforeach()
+        target_link_libraries(Reflection PRIVATE ${_GST_LINK_LIBS})
+        message(STATUS "GStreamer linking (MSVC + MSYS2): ${_GST_LINK_LIBS}")
+    else()
+        target_link_libraries(Reflection PRIVATE
+            ${GST_LIBRARIES}
+            ${GST_APP_LIBRARIES}
+            ${GST_VIDEO_LIBRARIES}
+        )
+        target_link_directories(Reflection PRIVATE
+            ${GST_LIBRARY_DIRS}
+            ${GST_APP_LIBRARY_DIRS}
+            ${GST_VIDEO_LIBRARY_DIRS}
+        )
+    endif()
 endif()
 
 # Link FDK-AAC if found
@@ -232,6 +336,72 @@ endif()
 set_target_properties(Reflection PROPERTIES
     VS_DPI_AWARE "PerMonitor"
 )
+
+# Copy UI assets (HTML/CSS/JS) next to the executable
+set(UI_ASSETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/assets")
+add_custom_command(TARGET Reflection POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${UI_ASSETS_SRC}"
+        "$<TARGET_FILE_DIR:Reflection>/assets"
+    COMMENT "Copying UI assets to build output"
+)
+
+# --------------------------------------------------------------------------
+# Copy MSYS2 GStreamer runtime DLLs next to the executable.
+# MSVC links against MSYS2 .dll.a import libraries at build time, but
+# at runtime the actual .dll files must be discoverable. The industry
+# standard approach is to co-locate them with the executable.
+# --------------------------------------------------------------------------
+if(USE_UXPLAY AND GST_LIBRARY_DIRS MATCHES "msys64")
+    # Derive the MSYS2 bin directory from the lib directory
+    string(REPLACE "/lib" "/bin" _MSYS2_BIN_DIR "${GST_LIBRARY_DIRS}")
+    # Also handle backslash paths
+    string(REPLACE "\\lib" "\\bin" _MSYS2_BIN_DIR "${_MSYS2_BIN_DIR}")
+
+    # Complete dependency tree for our GStreamer usage (recursive objdump scan
+    # PLUS runtime-loaded deps via LoadLibrary).
+    # ALL MSYS2 DLLs must be co-located with the exe to prevent PATH pollution
+    # from Git for Windows (C:\Program Files\Git\mingw64\bin) which ships
+    # incompatible mingw64 versions of the same DLLs.
+    #
+    # Import-table deps: gstreamer, gstapp, gstvideo, gstbase, glib, gobject,
+    #   gmodule, intl, iconv, winpthread, gcc_s_seh, pcre2, ffi, orc
+    # Runtime-loaded (via libintl gettext IDN support):
+    #   libidn2-0, libunistring-5
+    set(_MSYS2_DLLS
+        libgstreamer-1.0-0.dll
+        libgstapp-1.0-0.dll
+        libgstvideo-1.0-0.dll
+        libgstbase-1.0-0.dll
+        libglib-2.0-0.dll
+        libgobject-2.0-0.dll
+        libgmodule-2.0-0.dll
+        libintl-8.dll
+        libiconv-2.dll
+        libidn2-0.dll
+        libunistring-5.dll
+        libwinpthread-1.dll
+        libgcc_s_seh-1.dll
+        libpcre2-8-0.dll
+        libffi-8.dll
+        liborc-0.4-0.dll
+    )
+
+    foreach(_dll ${_MSYS2_DLLS})
+        set(_dll_path "${_MSYS2_BIN_DIR}/${_dll}")
+        if(EXISTS "${_dll_path}")
+            add_custom_command(TARGET Reflection POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_dll_path}"
+                    "$<TARGET_FILE_DIR:Reflection>/${_dll}"
+            )
+        else()
+            message(WARNING "MSYS2 DLL not found: ${_dll_path}")
+        endif()
+    endforeach()
+
+    message(STATUS "MSYS2 GStreamer DLLs will be copied to build output (${_MSYS2_BIN_DIR})")
+endif()
 
 # --------------------------------------------------------------------------
 # Tests
