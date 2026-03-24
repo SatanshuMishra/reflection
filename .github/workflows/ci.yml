@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
+  build-macos:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -20,3 +20,37 @@ jobs:
 
       - name: Run tests
         run: swift test
+
+  build-windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: windows
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'windows/vcpkg.json'
+        env:
+          VCPKG_BINARY_SOURCES: 'clear;default,readwrite'
+
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -A x64
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Run tests
+        run: ctest --test-dir build --config Release --output-on-failure

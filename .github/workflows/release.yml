@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  # ---- macOS Build ----
+  build-macos:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +82,6 @@ jobs:
 
       - name: Create DMG
         run: |
-          # Create staging directory with app and Applications symlink for drag-to-install
           mkdir -p dmg-staging
           cp -R Reflection.app dmg-staging/
           ln -s /Applications dmg-staging/Applications
@@ -112,14 +112,95 @@ jobs:
 
           xcrun stapler staple Reflection.dmg
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          files: Reflection.dmg
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: release-macos
+          path: Reflection.dmg
 
       - name: Cleanup keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db 2>/dev/null || true
+
+  # ---- Windows Build ----
+  build-windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: windows
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: 'windows/vcpkg.json'
+        env:
+          VCPKG_BINARY_SOURCES: 'clear;default,readwrite'
+
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -A x64
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Run tests
+        run: ctest --test-dir build --config Release --output-on-failure
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $staging = "Reflection-x64"
+          New-Item -ItemType Directory -Path $staging -Force
+          Copy-Item "build/Release/Reflection.exe" "$staging/"
+          # Copy co-located DLLs
+          Get-ChildItem "build/Release/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$staging/"
+          # Copy bundled GStreamer plugins
+          if (Test-Path "build/Release/plugins") {
+              Copy-Item "build/Release/plugins" "$staging/plugins" -Recurse
+          }
+          # Copy UI assets
+          if (Test-Path "build/Release/assets") {
+              Copy-Item "build/Release/assets" "$staging/assets" -Recurse
+          }
+          Compress-Archive -Path "$staging/*" -DestinationPath "Reflection-${{ steps.version.outputs.version }}-windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: windows/Reflection-*.zip
+
+  # ---- Create Unified Release ----
+  create-release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "Reflection ${{ github.ref_name }}"
+          files: artifacts/**/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
