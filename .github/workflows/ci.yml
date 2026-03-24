@@ -10,7 +10,7 @@ jobs:
   build-macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
@@ -22,48 +22,117 @@ jobs:
         run: swift test
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GSTREAMER_VERSION: 1.22.12
+      GSTREAMER_BASE: https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc
+      GSTREAMER_RUNTIME: gstreamer-1.0-msvc-x86_64-1.22.12.msi
+      GSTREAMER_DEVEL: gstreamer-1.0-devel-msvc-x86_64-1.22.12.msi
 
     defaults:
       run:
         working-directory: windows
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
 
       - name: Restore GStreamer MSVC cache
         id: cache-gstreamer
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: D:\gstreamer
-          key: gstreamer-msvc-1.22.12-d
+          key: gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-sha256sum-v1-${{ github.run_id }}
+          restore-keys: |
+            gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-sha256sum-v1-
 
-      - name: Install GStreamer MSVC
-        if: steps.cache-gstreamer.outputs.cache-hit != 'true'
+      - name: Validate GStreamer cache
+        id: validate-gstreamer-cache
         shell: bash
         run: |
-          BASE="https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc"
-          RUNTIME="gstreamer-1.0-msvc-x86_64-1.22.12.msi"
-          DEVEL="gstreamer-1.0-devel-msvc-x86_64-1.22.12.msi"
-          for f in "$RUNTIME" "$DEVEL"; do
-            echo "Downloading $f..."
+          set -euo pipefail
+          runtime_ok=false
+          devel_ok=false
+          [ -f "D:/gstreamer/1.0/msvc_x86_64/bin/gstreamer-1.0-0.dll" ] && runtime_ok=true
+          [ -f "D:/gstreamer/1.0/msvc_x86_64/lib/pkgconfig/gstreamer-1.0.pc" ] && devel_ok=true
+          if [ "$runtime_ok" = true ] && [ "$devel_ok" = true ]; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "Cache validation: hit + runtime/devel verified"
+          else
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "Cache validation: miss or invalid cache layout (runtime_ok=$runtime_ok devel_ok=$devel_ok)"
+          fi
+
+      - name: Install GStreamer MSVC
+        if: steps.validate-gstreamer-cache.outputs.valid != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${GSTREAMER_BASE}"
+          RUNTIME="${GSTREAMER_RUNTIME}"
+          DEVEL="${GSTREAMER_DEVEL}"
+
+          download_and_verify() {
+            local file="$1"
+            local msi_path="$RUNNER_TEMP/$file"
+            local sum_path="$RUNNER_TEMP/$file.sha256sum"
+            echo "[download] $file"
             curl -L --retry 5 --retry-delay 10 --retry-max-time 300 \
-                 --connect-timeout 30 --max-time 300 \
-                 -o "$RUNNER_TEMP/$f" "$BASE/$f"
-          done
-          RUNTIME_PATH=$(cygpath -w "$RUNNER_TEMP/$RUNTIME")
-          DEVEL_PATH=$(cygpath -w "$RUNNER_TEMP/$DEVEL")
-          msiexec //i "$RUNTIME_PATH" //qn INSTALLDIR=D:\\gstreamer
-          msiexec //i "$DEVEL_PATH" //qn INSTALLDIR=D:\\gstreamer
+              --connect-timeout 30 --max-time 300 --fail \
+              -o "$msi_path" "$BASE/$file" || { echo "ERROR[download]: $file"; exit 11; }
+            curl -L --retry 5 --retry-delay 10 --retry-max-time 300 \
+              --connect-timeout 30 --max-time 300 --fail \
+              -o "$sum_path" "$BASE/$file.sha256sum" || { echo "ERROR[checksum-download]: $file.sha256sum"; exit 12; }
+
+            local expected
+            expected="$(awk '{print tolower($1)}' "$sum_path" | tr -d '\r')"
+            local actual
+            actual="$(sha256sum "$msi_path" | awk '{print tolower($1)}')"
+            [ -n "$expected" ] || { echo "ERROR[checksum-empty]: $file"; exit 13; }
+            [ "$actual" = "$expected" ] || { echo "ERROR[checksum-mismatch]: $file"; exit 14; }
+            echo "[checksum] $file verified"
+          }
+
+          install_msi() {
+            local file="$1"
+            local msi_win_path
+            msi_win_path="$(cygpath -w "$RUNNER_TEMP/$file")"
+            local log_win_path
+            log_win_path="$(cygpath -w "$RUNNER_TEMP/$file.install.log")"
+            echo "[msiexec] installing $file"
+            if ! msiexec //i "$msi_win_path" //qn //norestart //l*v "$log_win_path" INSTALLDIR=D:\\gstreamer; then
+              echo "ERROR[msiexec-$file]: log=$log_win_path"
+              exit 15
+            fi
+          }
+
+          download_and_verify "$RUNTIME"
+          download_and_verify "$DEVEL"
+          install_msi "$RUNTIME"
+          install_msi "$DEVEL"
+
+          if [ ! -f "D:/gstreamer/1.0/msvc_x86_64/bin/gstreamer-1.0-0.dll" ]; then
+            echo "ERROR[postinstall-verify]: gstreamer-1.0-0.dll missing"
+            ls -la D:/gstreamer/ 2>/dev/null || true
+            exit 16
+          fi
+          echo "GStreamer ${GSTREAMER_VERSION} installed and verified"
+
+      - name: Verify GStreamer installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "D:/gstreamer/1.0/msvc_x86_64/bin/gstreamer-1.0-0.dll" || { echo "ERROR[verify-env]: GStreamer runtime missing"; exit 17; }
+          test -f "D:/gstreamer/1.0/msvc_x86_64/lib/pkgconfig/gstreamer-1.0.pc" || { echo "ERROR[verify-env]: GStreamer devel pkg-config file missing"; exit 18; }
 
       - name: Save GStreamer MSVC cache
-        if: steps.cache-gstreamer.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        if: steps.validate-gstreamer-cache.outputs.valid != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: D:\gstreamer
-          key: gstreamer-msvc-1.22.12-d
+          key: gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-sha256sum-v1-${{ github.run_id }}
 
       - name: Set GStreamer environment
         shell: pwsh
@@ -74,7 +143,7 @@ jobs:
           echo "PKG_CONFIG_PATH=$gstPath\lib\pkgconfig" >> $env:GITHUB_ENV
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@5e0cab206a5ea620130caf672fce3e4a6b5666a1 # v11.5
         with:
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           vcpkgJsonGlob: 'windows/vcpkg.json'
@@ -99,8 +168,22 @@ jobs:
           $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
           cmake --build build --config Release
 
-      - name: Run tests
+      - name: Run deterministic tests
         shell: pwsh
         run: |
           $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
-          ctest --test-dir build -C Release --output-on-failure -E "FrameStaleMonitorTest.BecomesStaleWhenFramesStop"
+          ctest --test-dir build -C Release --output-on-failure -E "^FrameStaleMonitorTest\.BecomesStaleWhenFramesStop$"
+
+      - name: Run flaky timing test (retry once)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
+          $pattern = "^FrameStaleMonitorTest\.BecomesStaleWhenFramesStop$"
+          ctest --test-dir build -C Release --output-on-failure -R $pattern
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Flaky timing test failed on first attempt; retrying once..."
+            ctest --test-dir build -C Release --output-on-failure -R $pattern
+            if ($LASTEXITCODE -ne 0) {
+              throw "Flaky timing test failed on both attempts"
+            }
+          }
