@@ -134,6 +134,24 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install GStreamer MSVC
+        shell: pwsh
+        run: |
+          $gstVer = "1.24.12"
+          $baseUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/$gstVer"
+          # Download runtime and development MSIs
+          Invoke-WebRequest "$baseUrl/msvc/gstreamer-1.0-msvc-x86_64-$gstVer.msi" -OutFile gst-runtime.msi
+          Invoke-WebRequest "$baseUrl/msvc/gstreamer-1.0-devel-msvc-x86_64-$gstVer.msi" -OutFile gst-devel.msi
+          # Silent install to default location (C:\gstreamer)
+          Start-Process msiexec -ArgumentList '/i gst-runtime.msi /quiet /norestart' -Wait
+          Start-Process msiexec -ArgumentList '/i gst-devel.msi /quiet /norestart' -Wait
+          # Verify installation
+          if (Test-Path "C:\gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe") {
+            Write-Host "GStreamer $gstVer installed successfully"
+          } else {
+            throw "GStreamer installation failed"
+          }
+
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
@@ -143,18 +161,27 @@ jobs:
           VCPKG_BINARY_SOURCES: 'clear;default,readwrite'
 
       - name: Configure CMake
-        run: >
-          cmake -B build
-          -A x64
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-          -DBUILD_TESTS=ON
+        shell: pwsh
+        run: |
+          $env:PKG_CONFIG_PATH = "C:\gstreamer\1.0\msvc_x86_64\lib\pkgconfig"
+          $env:PATH = "C:\gstreamer\1.0\msvc_x86_64\bin;$env:PATH"
+          cmake -B build `
+            -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DBUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --config Release
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\gstreamer\1.0\msvc_x86_64\bin;$env:PATH"
+          cmake --build build --config Release
 
       - name: Run tests
-        run: ctest --test-dir build --config Release --output-on-failure
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\gstreamer\1.0\msvc_x86_64\bin;$env:PATH"
+          ctest --test-dir build --config Release --output-on-failure
 
       - name: Extract version from tag
         id: version
