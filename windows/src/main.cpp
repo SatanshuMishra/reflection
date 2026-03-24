@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Satanshu Mishra
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -65,23 +68,39 @@ struct ComGuard {
 };
 
 #ifdef USE_UXPLAY
-/// Configure the MSYS2 GStreamer environment BEFORE gst_init().
+/// Configure GStreamer plugin and DLL paths BEFORE gst_init().
 ///
-/// Problem: MSVC-built exe loads GStreamer DLLs from MSYS2 ucrt64. Those DLLs
-/// and their plugins have transitive dependencies (libidn2, libiconv, etc.)
-/// that must come from MSYS2. But Git for Windows ships incompatible mingw64
-/// versions of the same DLLs in PATH (C:\Program Files\Git\mingw64\bin).
-///
-/// Solution: Detect the MSYS2 prefix from the co-located libgstreamer DLL,
-/// then PREPEND the MSYS2 bin/ to PATH (so it's searched before Git's) and
-/// set GST_PLUGIN_PATH to the MSYS2 plugin directory.
+/// Two-tier detection:
+///   Tier 1 (Release): Bundled plugins/ directory next to the executable.
+///     Core DLLs are co-located, plugins are in a plugins/ subdirectory.
+///     GST_PLUGIN_SYSTEM_PATH is cleared to prevent loading incompatible
+///     system plugins.
+///   Tier 2 (Dev): MSYS2 ucrt64 installation. Prepends the MSYS2 bin/
+///     to PATH and sets GST_PLUGIN_PATH to the MSYS2 plugin directory.
 void configure_gstreamer_environment() {
-    // Detect MSYS2 prefix from the libgstreamer DLL next to the exe.
-    // The DLL is co-located via CMake post-build copy, but we can read the
-    // MSYS2 prefix from where it was originally loaded.
+    // Get the directory containing Reflection.exe
+    char exe_path[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
+    std::string exe_dir(exe_path);
+    const auto last_sep = exe_dir.find_last_of("\\/");
+    if (last_sep != std::string::npos) {
+        exe_dir = exe_dir.substr(0, last_sep);
+    }
+
+    // Tier 1: Check for bundled plugins/ directory next to the executable
+    std::string bundled_plugins = exe_dir + "\\plugins";
+    if (GetFileAttributesA(bundled_plugins.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        _putenv_s("GST_PLUGIN_PATH", bundled_plugins.c_str());
+        // Prevent GStreamer from scanning system-wide plugin directories
+        // which may contain incompatible versions
+        _putenv_s("GST_PLUGIN_SYSTEM_PATH", "");
+        reflection::Logger::info("GStreamer plugins: bundled ({})", bundled_plugins);
+        return;
+    }
+
+    // Tier 2: Development mode -- find MSYS2 installation
     std::string msys2_prefix;
 
-    // Try to find the MSYS2 install by checking known locations
     const char* candidates[] = {
         "C:\\msys64\\ucrt64",
         "C:\\msys2\\ucrt64",
@@ -96,7 +115,7 @@ void configure_gstreamer_environment() {
         }
     }
 
-    // Also check MSYS2_PREFIX environment variable
+    // Check MSYS2_PREFIX environment variable
     if (msys2_prefix.empty()) {
         const char* env_prefix = std::getenv("MSYS2_PREFIX");
         if (env_prefix && env_prefix[0]) {
@@ -105,15 +124,15 @@ void configure_gstreamer_environment() {
     }
 
     if (msys2_prefix.empty()) {
-        msys2_prefix = "C:\\msys64\\ucrt64";  // Fallback
+        msys2_prefix = "C:\\msys64\\ucrt64";  // Last resort fallback
     }
 
-    // 1. Set GST_PLUGIN_PATH so gst_init() finds element plugins
+    // Set GST_PLUGIN_PATH to MSYS2 plugin directory
     std::string plugin_path = msys2_prefix + "\\lib\\gstreamer-1.0";
     _putenv_s("GST_PLUGIN_PATH", plugin_path.c_str());
 
-    // 2. PREPEND MSYS2 bin/ to PATH so ALL transitive DLL dependencies
-    //    are resolved from MSYS2 before Git for Windows or other MinGW installs
+    // Prepend MSYS2 bin/ to PATH so transitive DLL dependencies
+    // are resolved from MSYS2 before Git for Windows or other MinGW installs
     std::string msys2_bin = msys2_prefix + "\\bin";
     const char* current_path = std::getenv("PATH");
     std::string new_path = msys2_bin;
@@ -122,6 +141,8 @@ void configure_gstreamer_environment() {
         new_path += current_path;
     }
     _putenv_s("PATH", new_path.c_str());
+
+    reflection::Logger::info("GStreamer plugins: MSYS2 dev mode ({})", plugin_path);
 }
 
 /// RAII wrapper for GStreamer initialization.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Satanshu Mishra
+
 #include "render/D3D11Renderer.h"
 #include "render/VideoShaders.h"
 #include "utilities/Constants.h"
