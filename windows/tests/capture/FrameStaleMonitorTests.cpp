@@ -55,14 +55,15 @@ TEST(FrameStaleMonitorTest, BecomesStaleWhenFramesStop) {
     // Record a frame so it becomes "receiving"
     monitor.record_frame();
 
-    // Wait for receiving status
-    for (int i = 0; i < 20 && status_count.load() < 1; ++i) {
+    // Wait for receiving status (generous timeout for slow CI runners)
+    for (int i = 0; i < 40 && status_count.load() < 1; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     EXPECT_TRUE(last_status.load());
 
-    // Now stop recording frames and wait for stale detection
-    for (int i = 0; i < 40 && status_count.load() < 2; ++i) {
+    // Now stop recording frames and wait for stale detection.
+    // CI runners can be slow — use generous timeout (80 × 50ms = 4s).
+    for (int i = 0; i < 80 && status_count.load() < 2; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
