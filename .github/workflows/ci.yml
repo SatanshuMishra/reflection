@@ -33,27 +33,50 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache GStreamer MSVC
+      - name: Restore GStreamer MSVC cache
         id: cache-gstreamer
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: C:\gstreamer
-          key: gstreamer-msvc-1.22.12
+          path: D:\gstreamer
+          key: gstreamer-msvc-1.22.12-d
 
       - name: Install GStreamer MSVC
         if: steps.cache-gstreamer.outputs.cache-hit != 'true'
-        uses: blinemedical/setup-gstreamer@v1
-        with:
-          version: '1.22.12'
-
-      - name: Set GStreamer environment (from cache)
-        if: steps.cache-gstreamer.outputs.cache-hit == 'true'
         shell: pwsh
         run: |
-          $gstPath = "C:\gstreamer\1.0\msvc_x86_64"
-          [System.Environment]::SetEnvironmentVariable("GSTREAMER_1_0_ROOT_MSVC_X86_64", $gstPath, "Process")
+          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc/gstreamer-1.0-msvc-x86_64-1.22.12.msi"
+          $msi = "$env:RUNNER_TEMP\gstreamer.msi"
+          $devUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.12/msvc/gstreamer-1.0-devel-msvc-x86_64-1.22.12.msi"
+          $devMsi = "$env:RUNNER_TEMP\gstreamer-devel.msi"
+          for ($i = 1; $i -le 5; $i++) {
+            try {
+              Write-Host "Download attempt $i/5..."
+              Invoke-WebRequest -Uri $url -OutFile $msi -TimeoutSec 120
+              Invoke-WebRequest -Uri $devUrl -OutFile $devMsi -TimeoutSec 120
+              break
+            } catch {
+              Write-Warning "Attempt $i failed: $_"
+              if ($i -eq 5) { throw "Failed to download GStreamer after 5 attempts" }
+              Start-Sleep -Seconds (10 * $i)
+            }
+          }
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn INSTALLDIR=D:\gstreamer" -Wait -NoNewWindow
+          Start-Process msiexec.exe -ArgumentList "/i `"$devMsi`" /qn INSTALLDIR=D:\gstreamer" -Wait -NoNewWindow
+
+      - name: Save GStreamer MSVC cache
+        if: steps.cache-gstreamer.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: D:\gstreamer
+          key: gstreamer-msvc-1.22.12-d
+
+      - name: Set GStreamer environment
+        shell: pwsh
+        run: |
+          $gstPath = "D:\gstreamer\1.0\msvc_x86_64"
           echo "GSTREAMER_1_0_ROOT_MSVC_X86_64=$gstPath" >> $env:GITHUB_ENV
           echo "$gstPath\bin" >> $env:GITHUB_PATH
+          echo "PKG_CONFIG_PATH=$gstPath\lib\pkgconfig" >> $env:GITHUB_ENV
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
