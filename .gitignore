@@ -33,3 +33,4 @@ build-uxplay/
 # Editor and tool configuration (local state only)
 .claude/
 CLAUDE.md
+windows/installer/Output/

@@ -28,17 +28,18 @@ Reflection is distributed as an open-source, ad-hoc signed application. macOS Ga
 
 ### Windows
 
-1. Download the latest `.zip` from [Releases](https://github.com/SatanshuMishra/reflection/releases)
-2. Extract the ZIP to a folder of your choice (e.g., `C:\Program Files\Reflection`)
-3. Run `Reflection.exe`
+**Recommended:** Download the **Setup installer** (`.exe`) from [Releases](https://github.com/SatanshuMishra/reflection/releases). The installer:
+- Installs to Program Files with Start Menu shortcuts
+- Configures Windows Firewall automatically
+- Registers an uninstaller in Settings > Apps
+
+**Portable:** Download the `.zip` if you prefer a standalone copy -- extract to any folder and run `Reflection.exe`.
+
+To uninstall: **Settings > Apps > Reflection > Uninstall**, or use the Start Menu shortcut.
 
 #### Windows SmartScreen Warning
 
 Windows SmartScreen may display a warning that the app is from an unknown publisher. Click **More info**, then **Run anyway**. This is standard behavior for unsigned open-source applications.
-
-#### Firewall Permission
-
-On first launch, Reflection will prompt you to allow network access through Windows Firewall. This is required for iPads to discover and connect to your PC via AirPlay.
 
 ## Usage
 
