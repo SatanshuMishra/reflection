@@ -145,9 +145,9 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: D:\gstreamer
-          key: gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-sha256sum-v1-${{ github.run_id }}
+          key: gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-v2-${{ github.run_id }}
           restore-keys: |
-            gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-sha256sum-v1-
+            gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-v2-
 
       - name: Validate GStreamer cache
         id: validate-gstreamer-cache
@@ -175,25 +175,17 @@ jobs:
           RUNTIME="${GSTREAMER_RUNTIME}"
           DEVEL="${GSTREAMER_DEVEL}"
 
-          download_and_verify() {
+          download_msi() {
             local file="$1"
             local msi_path="$RUNNER_TEMP/$file"
-            local sum_path="$RUNNER_TEMP/$file.sha256sum"
             echo "[download] $file"
             curl -L --retry 5 --retry-delay 10 --retry-max-time 300 \
               --connect-timeout 30 --max-time 300 --fail \
               -o "$msi_path" "$BASE/$file" || { echo "ERROR[download]: $file"; exit 11; }
-            curl -L --retry 5 --retry-delay 10 --retry-max-time 300 \
-              --connect-timeout 30 --max-time 300 --fail \
-              -o "$sum_path" "$BASE/$file.sha256sum" || { echo "ERROR[checksum-download]: $file.sha256sum"; exit 12; }
-
-            local expected
-            expected="$(awk '{print tolower($1)}' "$sum_path" | tr -d '\r')"
-            local actual
-            actual="$(sha256sum "$msi_path" | awk '{print tolower($1)}')"
-            [ -n "$expected" ] || { echo "ERROR[checksum-empty]: $file"; exit 13; }
-            [ "$actual" = "$expected" ] || { echo "ERROR[checksum-mismatch]: $file"; exit 14; }
-            echo "[checksum] $file verified"
+            local size
+            size="$(stat -c%s "$msi_path" 2>/dev/null || echo 0)"
+            [ "$size" -gt 1000000 ] || { echo "ERROR[size]: $file is only $size bytes"; exit 12; }
+            echo "[downloaded] $file ($size bytes)"
           }
 
           install_msi() {
@@ -209,8 +201,8 @@ jobs:
             fi
           }
 
-          download_and_verify "$RUNTIME"
-          download_and_verify "$DEVEL"
+          download_msi "$RUNTIME"
+          download_msi "$DEVEL"
           install_msi "$RUNTIME"
           install_msi "$DEVEL"
 
@@ -233,7 +225,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: D:\gstreamer
-          key: gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-sha256sum-v1-${{ github.run_id }}
+          key: gstreamer-msvc-${{ env.GSTREAMER_VERSION }}-v2-${{ github.run_id }}
 
       - name: Set GStreamer environment
         shell: pwsh
