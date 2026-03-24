@@ -15,6 +15,59 @@
             overflow: hidden;
         }
 
+        /* Top bar: drag handle (left) + minimize button (right) */
+        .window-controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px 0 12px;
+            flex-shrink: 0;
+        }
+
+        .drag-handle {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-disabled);
+            cursor: grab;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.15s ease;
+        }
+
+        .drag-handle:active {
+            cursor: grabbing;
+            color: var(--text-tertiary);
+        }
+
+        .drag-handle:hover {
+            color: var(--text-tertiary);
+        }
+
+        .minimize-btn {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+
+        .minimize-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
         .page-container {
             flex: 1;
             position: relative;
@@ -27,8 +80,13 @@
             display: flex;
             flex-direction: column;
             justify-content: center;
-            align-items: center;
-            padding: 32px 48px;
+            align-items: flex-start;
+            /* Horizontal: generous side padding for breathing room.
+               Vertical: bottom padding shifts content up to optically compensate for
+               window chrome above (controls + step indicator ~74px), so content appears
+               centered relative to the full window, not just the page-container.
+               Top padding ensures Back button is never clipped against the edge. */
+            padding: 24px 64px 74px;
             opacity: 0;
             pointer-events: none;
             transition: none;
@@ -42,8 +100,8 @@
 
         /* Welcome Page */
         .welcome-content {
-            text-align: center;
-            max-width: 480px;
+            text-align: left;
+            width: 100%;
         }
 
         .welcome-pretitle {
@@ -57,10 +115,7 @@
             font-weight: 700;
             letter-spacing: -1px;
             margin-bottom: 16px;
-            background: linear-gradient(135deg, var(--accent), #5856D6);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            color: var(--text-primary);
         }
 
         .welcome-subtitle {
@@ -73,11 +128,14 @@
         /* Name Page */
         .name-content {
             width: 100%;
-            max-width: 420px;
+        }
+
+        .page-subtitle {
+            margin-top: 8px;
         }
 
         .name-header {
-            text-align: center;
+            text-align: left;
             margin-bottom: 32px;
         }
 
@@ -91,7 +149,7 @@
             flex: 1;
             font-size: 18px;
             padding: 14px 18px;
-            text-align: center;
+            text-align: left;
             font-weight: 500;
             letter-spacing: 0.5px;
         }
@@ -119,7 +177,7 @@
         }
 
         .name-hint {
-            text-align: center;
+            text-align: left;
             color: var(--text-tertiary);
             font-size: 13px;
             margin-bottom: 32px;
@@ -128,11 +186,10 @@
         /* Firewall Page */
         .firewall-content {
             width: 100%;
-            max-width: 420px;
         }
 
         .firewall-header {
-            text-align: center;
+            text-align: left;
             margin-bottom: 32px;
         }
 
@@ -235,10 +292,61 @@
             height: 18px;
         }
 
+        /* Back button — subtle, left-aligned */
+        .btn-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px 4px 4px;
+            margin-bottom: 16px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-tertiary);
+            font-family: inherit;
+            font-size: 13px;
+            cursor: pointer;
+            transition: color 0.15s ease, background-color 0.15s ease;
+        }
+
+        .btn-back:hover {
+            color: var(--text-secondary);
+            background: var(--bg-hover);
+        }
+
+        .btn-back:focus-visible {
+            box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.35);
+        }
+
+        /* Skip link — subtle text action, not a full button */
+        .btn-skip {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 0;
+            border: none;
+            background: transparent;
+            color: var(--text-tertiary);
+            font-family: inherit;
+            font-size: 13px;
+            cursor: pointer;
+            transition: color 0.15s ease;
+        }
+
+        .btn-skip:hover {
+            color: var(--text-secondary);
+        }
+
+        .btn-skip:focus-visible {
+            outline: 2px solid rgba(0, 122, 255, 0.35);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
         /* Button row */
         .btn-row {
             display: flex;
-            justify-content: center;
+            align-items: center;
+            justify-content: flex-start;
             gap: 12px;
             margin-top: 8px;
         }
@@ -246,9 +354,35 @@
         .btn-row .btn {
             min-width: 160px;
         }
+
+        /* Firewall actions: Allow + Skip on same line */
+        .firewall-actions-row {
+            gap: 16px;
+        }
     </style>
 </head>
 <body>
+    <!-- Window controls: drag handle (left) + minimize (right) -->
+    <div class="window-controls">
+        <div class="drag-handle" id="dragHandle" title="Drag to move"
+             role="button" aria-label="Drag to reposition window">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="3" r="1.5"/>
+                <circle cx="11" cy="3" r="1.5"/>
+                <circle cx="5" cy="8" r="1.5"/>
+                <circle cx="11" cy="8" r="1.5"/>
+                <circle cx="5" cy="13" r="1.5"/>
+                <circle cx="11" cy="13" r="1.5"/>
+            </svg>
+        </div>
+        <button class="minimize-btn" onclick="minimizeWindow()" title="Minimize"
+                aria-label="Minimize window">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                <path d="M6 12h12v2H6z"/>
+            </svg>
+        </button>
+    </div>
+
     <!-- Step Indicator -->
     <div class="step-indicator" id="stepIndicator">
         <div class="step-dot active" data-step="0"></div>
@@ -277,9 +411,15 @@
         <!-- Page 2: Name Your Device -->
         <div class="page" id="page-name">
             <div class="name-content">
+                <button class="btn-back" onclick="goToPage(0)" aria-label="Go back">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                        <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                    </svg>
+                    Back
+                </button>
                 <div class="name-header">
                     <h2>Name Your Device</h2>
-                    <p class="subtitle" style="margin-top: 8px;">
+                    <p class="subtitle page-subtitle">
                         This is how iPads will see your computer
                     </p>
                 </div>
@@ -287,10 +427,12 @@
                 <div class="name-input-group">
                     <input type="text" class="input" id="deviceName"
                            placeholder="Enter a name..." maxlength="64"
-                           spellcheck="false" autocomplete="off">
+                           spellcheck="false" autocomplete="off"
+                           aria-label="Device display name">
                     <button class="shuffle-btn" id="shuffleBtn"
-                            onclick="shuffleName()" title="Generate new name">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            onclick="shuffleName()" title="Generate new name"
+                            aria-label="Generate random name">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
                             <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
                         </svg>
                     </button>
@@ -310,9 +452,15 @@
         <!-- Page 3: Firewall Setup -->
         <div class="page" id="page-firewall">
             <div class="firewall-content">
+                <button class="btn-back" onclick="goToPage(1)" aria-label="Go back">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                        <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                    </svg>
+                    Back
+                </button>
                 <div class="firewall-header">
                     <h2>Network Access</h2>
-                    <p class="subtitle" style="margin-top: 8px;">
+                    <p class="subtitle page-subtitle">
                         Allow iPads to connect wirelessly
                     </p>
                 </div>
@@ -361,15 +509,11 @@
                     <span id="firewallStatusText"></span>
                 </div>
 
-                <div class="btn-row" id="firewallActions">
+                <div class="btn-row firewall-actions-row" id="firewallActions">
                     <button class="btn btn-primary" id="allowBtn" onclick="requestFirewall()">
                         Allow Access
                     </button>
-                </div>
-
-                <div class="btn-row" id="skipRow" style="margin-top: 8px;">
-                    <button class="btn btn-secondary" style="font-size:13px;padding:8px 16px;opacity:0.7;"
-                            onclick="completeOnboarding()">
+                    <button class="btn-skip" id="skipBtn" onclick="completeOnboarding()">
                         Skip for Now
                     </button>
                 </div>
