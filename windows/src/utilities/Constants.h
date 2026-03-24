@@ -61,11 +61,11 @@ constexpr int kMinMirrorWidth = 320;
 constexpr int kMinMirrorHeight = 240;
 constexpr double kDefaultAspectRatio = 4.0 / 3.0;
 
-constexpr int kOnboardingWidth = 800;
-constexpr int kOnboardingHeight = 600;
+constexpr int kOnboardingWidth = 900;
+constexpr int kOnboardingHeight = 800;
 
-constexpr int kStatusWindowWidth = 420;
-constexpr int kStatusWindowHeight = 400;
+constexpr int kStatusWindowWidth = 480;
+constexpr int kStatusWindowHeight = 520;
 
 // --------------------------------------------------------------------------
 // Colors (matching macOS app: near-black #121215)
@@ -143,6 +143,7 @@ constexpr uint32_t kWmMirrorWindowClosed = 0x8000 + 4;   // WM_APP + 4
 constexpr uint32_t kWmThemeChanged = 0x8000 + 5;          // WM_APP + 5
 constexpr uint32_t kWmOnboardingComplete = 0x8000 + 6;    // WM_APP + 6
 constexpr uint32_t kWmServerNameChanged = 0x8000 + 7;     // WM_APP + 7
+constexpr uint32_t kWmFirewallGranted = 0x8000 + 8;       // WM_APP + 8
 
 // --------------------------------------------------------------------------
 // Render Timer

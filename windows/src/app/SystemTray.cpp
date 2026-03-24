@@ -30,7 +30,7 @@ bool SystemTray::install(HWND parent_hwnd) {
         nid_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     }
 
-    wcscpy_s(nid_.szTip, L"Reflection — Waiting for iPad...");
+    wcscpy_s(nid_.szTip, L"Reflection -- Waiting for iPad...");
 
     installed_ = Shell_NotifyIcon(NIM_ADD, &nid_) != FALSE;
 
@@ -66,9 +66,9 @@ void SystemTray::set_connection_state(bool connected,
 
     // Update tooltip
     if (connected) {
-        set_tooltip(L"Reflection — Connected: " + device_name);
+        set_tooltip(L"Reflection -- Connected: " + device_name);
     } else {
-        set_tooltip(L"Reflection — Waiting for iPad...");
+        set_tooltip(L"Reflection -- Waiting for iPad...");
     }
 }
 

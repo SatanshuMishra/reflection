@@ -25,7 +25,7 @@ bool RPiPlayCore::init(const AirPlayCoreConfig& config) {
 
     config_ = config;
 
-    Logger::info("RPiPlayCore::init — server_name='{}', raop_port={}, airplay_port={}",
+    Logger::info("RPiPlayCore::init -- server_name='{}', raop_port={}, airplay_port={}",
                  config.server_name, config.raop_port, config.airplay_port);
 
     // Build RPiPlay callback struct.
@@ -61,7 +61,7 @@ bool RPiPlayCore::start() {
         return false;
     }
 
-    Logger::info("RPiPlayCore::start — listening on port {}", config_.raop_port);
+    Logger::info("RPiPlayCore::start -- listening on port {}", config_.raop_port);
 
     // raop_start takes a mutable port (it may choose a different one if busy).
     // Hardware address is NOT passed to raop_start — it's handled by the
