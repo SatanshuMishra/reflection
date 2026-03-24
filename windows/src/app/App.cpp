@@ -348,9 +348,12 @@ void App::on_ipad_connected() {
     // Initialize GStreamer pipeline — handles ALL decode + render on GPU
     pipeline_ = std::make_unique<GStreamerPipeline>();
     if (!pipeline_->init(mirror_window_->hwnd())) {
-        Logger::error("Failed to initialize GStreamer pipeline");
+        Logger::error("Failed to initialize GStreamer pipeline -- "
+                       "check GST_PLUGIN_PATH and bundled plugins");
         pipeline_.reset();
-        mirror_window_.reset();
+        // Use cleanup_mirror_session to safely destroy window
+        // (sets mirror_active_=false first, preventing cascading restart)
+        cleanup_mirror_session();
         return;
     }
 
@@ -358,6 +361,9 @@ void App::on_ipad_connected() {
     pipeline_->start();
     Logger::info("GStreamer pipeline started -- rendering into mirror window");
 #endif
+
+    // Mark mirror session as active AFTER successful pipeline init
+    mirror_active_ = true;
 
     // Update tray and status window with connection state
     std::wstring wdevice(device_name.begin(), device_name.end());
@@ -372,6 +378,14 @@ void App::on_ipad_connected() {
 }
 
 void App::on_ipad_disconnected() {
+    // Guard: UxPlay fires conn_destroy during service stop/restart.
+    // If mirror_active_ is already false, the session was already cleaned up
+    // by on_mirror_window_closed() or a prior disconnect — don't double-cleanup.
+    if (!mirror_active_) {
+        Logger::debug("Ignoring disconnect callback (session already cleaned up)");
+        return;
+    }
+
     Logger::info("iPad disconnected -- cleaning up mirror session");
     cleanup_mirror_session();
 
@@ -384,9 +398,19 @@ void App::on_ipad_disconnected() {
 }
 
 void App::on_mirror_window_closed() {
+    // Guard: only act if the mirror session was actively running.
+    // cleanup_mirror_session() clears mirror_active_ BEFORE destroying the
+    // window, so stale WM_DESTROY messages from programmatic cleanup
+    // (disconnect, server rename, shutdown) won't trigger a cascading restart.
+    if (!mirror_active_) {
+        Logger::debug("Ignoring stale mirror window close (session already cleaned up)");
+        return;
+    }
+
     Logger::info("Mirror window closed by user -- forcing immediate disconnect");
 
-    // 1. Stop rendering immediately
+    // 1. Clear the active flag and stop rendering
+    mirror_active_ = false;
     if (pipeline_) {
         pipeline_->stop();
         pipeline_.reset();
@@ -452,6 +476,11 @@ void App::on_server_name_changed() {
 }
 
 void App::cleanup_mirror_session() {
+    // Clear mirror_active_ FIRST — this prevents the WM_DESTROY message
+    // from mirror_window_.reset() from triggering on_mirror_window_closed()
+    // which would restart the AirPlay service in a cascading loop.
+    mirror_active_ = false;
+
     if (pipeline_) {
         pipeline_->stop();
         pipeline_.reset();

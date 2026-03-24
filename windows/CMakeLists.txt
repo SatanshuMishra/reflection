@@ -366,6 +366,9 @@ if(USE_UXPLAY AND GST_LIBRARY_DIRS MATCHES "msys64")
     #
     # Import-table deps: gstreamer, gstapp, gstvideo, gstbase, glib, gobject,
     #   gmodule, intl, iconv, winpthread, gcc_s_seh, pcre2, ffi, orc
+    # Plugin transitive deps (loaded when GStreamer scans plugin DLLs):
+    #   libgstcodecparsers (h264parse), libgstpbutils (codec detection),
+    #   libgstaudio (audio plugins), libgsttag (metadata)
     # Runtime-loaded (via libintl gettext IDN support):
     #   libidn2-0, libunistring-5
     set(_MSYS2_DLLS
@@ -373,6 +376,10 @@ if(USE_UXPLAY AND GST_LIBRARY_DIRS MATCHES "msys64")
         libgstapp-1.0-0.dll
         libgstvideo-1.0-0.dll
         libgstbase-1.0-0.dll
+        libgstcodecparsers-1.0-0.dll
+        libgstpbutils-1.0-0.dll
+        libgstaudio-1.0-0.dll
+        libgsttag-1.0-0.dll
         libglib-2.0-0.dll
         libgobject-2.0-0.dll
         libgmodule-2.0-0.dll

@@ -57,6 +57,11 @@ private:
     std::mutex connection_mutex_;
     std::optional<std::string> pending_device_name_;
 
+    /// True while a mirror session is actively running (set in on_ipad_connected,
+    /// cleared in cleanup_mirror_session). Guards against stale WM_DESTROY
+    /// messages from previous mirror windows triggering cascading restarts.
+    bool mirror_active_ = false;
+
     bool create_message_window();
     void on_tray_menu(int menu_item_id);
     static std::array<uint8_t, 6> get_machine_mac_address();
