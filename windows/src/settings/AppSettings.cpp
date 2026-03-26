@@ -122,6 +122,12 @@ bool AppSettings::read_bool(const wchar_t* name, bool default_value) const {
 }
 
 void AppSettings::write_string(const wchar_t* name, const std::wstring& value) {
+    // Guard against oversized values that would overflow DWORD size computation
+    constexpr size_t kMaxValueLen = 1024;
+    if (value.size() > kMaxValueLen) {
+        return;  // silently reject oversized values
+    }
+
     HKEY key;
     if (RegCreateKeyEx(HKEY_CURRENT_USER, constants::kRegistryRoot.data(),
                        0, nullptr, 0, KEY_WRITE, nullptr, &key,

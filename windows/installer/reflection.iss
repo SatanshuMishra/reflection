@@ -95,6 +95,14 @@ Filename: "{app}\{#AppExeName}"; \
   Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+; Run the app's own cleanup first (defense-in-depth — handles edge cases
+; that static [Registry] and [UninstallDelete] sections might miss).
+; Must run BEFORE file deletion since the exe needs to exist.
+Filename: "{app}\{#AppExeName}"; \
+  Parameters: "--uninstall-cleanup"; \
+  Flags: runhidden; \
+  RunOnceId: "AppCleanup"
+
 ; Remove firewall rule on uninstall
 Filename: "netsh.exe"; \
   Parameters: "advfirewall firewall delete rule name=""{#AppName}"" program=""{app}\{#AppExeName}"""; \
@@ -108,7 +116,16 @@ Type: files; Name: "{app}\reflection.log.*"
 ; Remove plugins and assets dirs (installer created them)
 Type: filesandordirs; Name: "{app}\plugins"
 Type: filesandordirs; Name: "{app}\assets"
+; Remove WebView2 user data (browser cache, cookies, localStorage)
+Type: filesandordirs; Name: "{localappdata}\{#AppName}"
 
 [Registry]
-; Store install path for the app to find at runtime (optional)
-Root: HKCU; Subkey: "Software\{#AppName}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletevalue
+; Application settings — delete entire key tree on uninstall.
+; This removes OnboardingCompleted, ServerName, Theme, FirewallConfigured,
+; window position, and all other app settings. Ensures reinstall starts fresh.
+Root: HKCU; Subkey: "Software\{#AppName}"; Flags: uninsdeletekey
+; Store install path (auto-deleted by uninsdeletekey above)
+Root: HKCU; Subkey: "Software\{#AppName}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"
+; Auto-start entry — dontcreatekey means installer won't create it (the app
+; creates it via Settings UI), but uninsdeletevalue ensures it's removed on uninstall.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#AppName}"; Flags: uninsdeletevalue dontcreatekey

@@ -174,6 +174,7 @@ set(REFLECTION_SOURCES
     src/settings/AppSettings.cpp
     src/settings/AutoStartService.cpp
     src/utilities/Logger.cpp
+    src/utilities/SessionDetector.cpp
     src/utilities/UpdateChecker.cpp
     src/utilities/NameGenerator.cpp
     src/ui/WebViewHost.cpp
@@ -253,6 +254,7 @@ target_link_libraries(Reflection PRIVATE
     # Windows system libraries (always needed)
     ws2_32
     iphlpapi
+    wtsapi32
     ole32
     oleaut32
     uuid
@@ -474,6 +476,15 @@ if(BUILD_TESTS)
         )
     endif()
 endif()
+
+# --------------------------------------------------------------------------
+# Install rules (used by CPack for MSI/ZIP packaging)
+# --------------------------------------------------------------------------
+install(TARGETS Reflection RUNTIME DESTINATION .)
+install(DIRECTORY "$<TARGET_FILE_DIR:Reflection>/assets"
+        DESTINATION . OPTIONAL)
+install(DIRECTORY "$<TARGET_FILE_DIR:Reflection>/plugins"
+        DESTINATION . OPTIONAL)
 
 # --------------------------------------------------------------------------
 # Installer (CPack + WiX)

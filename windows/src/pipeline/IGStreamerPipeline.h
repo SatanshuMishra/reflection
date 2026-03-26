@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "utilities/SessionDetector.h"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -28,7 +30,8 @@ public:
     /// Initialize the pipeline and attach to the given window handle.
     /// Creates the GStreamer pipeline elements and configures the videosink
     /// to render into the provided HWND.
-    [[nodiscard]] virtual bool init(HWND window_handle) = 0;
+    /// @param mode  Console = d3d11videosink (GPU), Remote = autovideosink (RDP-visible)
+    [[nodiscard]] virtual bool init(HWND window_handle, RenderMode mode) = 0;
 
     /// Start the pipeline (transitions to PLAYING state).
     virtual void start() = 0;

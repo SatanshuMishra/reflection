@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Satanshu Mishra
 
 #include "ui/WebViewHost.h"
+#include "utilities/Constants.h"
 #include "utilities/Logger.h"
 
 #include <shlobj.h>
@@ -20,7 +21,8 @@ bool WebViewHost::init() {
     // User data folder for WebView2 — in the user's local app data
     wchar_t* app_data = nullptr;
     SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &app_data);
-    std::wstring user_data = std::wstring(app_data) + L"\\Reflection\\WebView2";
+    std::wstring user_data = std::wstring(app_data) + L"\\" +
+        std::wstring(constants::kWebViewSubdir) + L"\\WebView2";
     CoTaskMemFree(app_data);
 
     // Create the WebView2 environment with options
@@ -102,10 +104,10 @@ void WebViewHost::on_controller_created(HRESULT result,
                 if (uri) {
                     std::wstring url(uri);
                     CoTaskMemFree(uri);
-                    // Allow file:// and about: URLs only
+                    // Allow file:// and about: URLs only.
+                    // data: URIs are blocked to prevent JS injection attacks.
                     if (url.find(L"file://") != 0 &&
-                        url.find(L"about:") != 0 &&
-                        url.find(L"data:") != 0) {
+                        url.find(L"about:") != 0) {
                         args->put_Cancel(TRUE);
                     }
                 }

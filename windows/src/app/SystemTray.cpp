@@ -130,6 +130,18 @@ void SystemTray::show_context_menu(HWND hwnd) {
     }
 }
 
+void SystemTray::show_balloon(const std::wstring& title,
+                               const std::wstring& message) {
+    if (!installed_) return;
+
+    nid_.uFlags = NIF_INFO;
+    wcsncpy_s(nid_.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(nid_.szInfo, message.c_str(), _TRUNCATE);
+    nid_.dwInfoFlags = NIIF_INFO;
+
+    Shell_NotifyIcon(NIM_MODIFY, &nid_);
+}
+
 void SystemTray::set_menu_callback(MenuCallback callback) {
     menu_callback_ = std::move(callback);
 }

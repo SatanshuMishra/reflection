@@ -8,6 +8,7 @@
 #include "airplay/IAirPlayCore.h"
 #include "mdns/IMdnsAdvertiser.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -70,7 +71,7 @@ public:
 private:
     std::unique_ptr<IAirPlayCore> core_;
     std::unique_ptr<IMdnsAdvertiser> mdns_;
-    bool running_ = false;
+    std::atomic<bool> running_ = false;
 
     // Stored callbacks
     ClientConnectedCallback client_connected_cb_;

@@ -295,13 +295,17 @@ void NativeMdnsAdvertiser::withdraw(const std::string& service_type) {
         Logger::info("Withdrew mDNS service: {}", service_type);
     }
 
-    // Stop thread if no more records
-    std::lock_guard lock(mutex_);
-    if (records_.empty()) {
-        // Request thread stop — must release mutex before join
-        if (announce_thread_.joinable()) {
-            announce_thread_.request_stop();
-        }
+    // If no more records remain, stop the announcement thread cleanly.
+    // jthread destructor will request_stop + join automatically, but we
+    // do it explicitly here so the thread stops promptly.
+    bool should_stop = false;
+    {
+        std::lock_guard lock(mutex_);
+        should_stop = records_.empty();
+    }
+    if (should_stop && announce_thread_.joinable()) {
+        announce_thread_.request_stop();
+        announce_thread_.join();
     }
 }
 

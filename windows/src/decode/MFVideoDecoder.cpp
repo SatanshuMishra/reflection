@@ -10,6 +10,7 @@
 #include <mfobjects.h>
 #include <mftransform.h>
 
+#include <atomic>
 #include <vector>
 
 #pragma comment(lib, "mfplat.lib")
@@ -139,6 +140,13 @@ bool MFVideoDecoder::decode(
     if (!initialized_ || !mft_) return false;
     if (!data || size == 0) return false;
 
+    // Guard against integer overflow: network-supplied size truncated to DWORD
+    constexpr size_t kMaxFrameSize = 4 * 1024 * 1024;  // 4 MiB
+    if (size > kMaxFrameSize) {
+        Logger::warn("Rejecting oversized video frame: {} bytes (max={})", size, kMaxFrameSize);
+        return false;
+    }
+
     if (!first_frame_logged_) {
         first_frame_logged_ = true;
         if (size >= 5) {
@@ -183,43 +191,52 @@ bool MFVideoDecoder::decode(
 }
 
 bool MFVideoDecoder::try_get_output_frame(DecodedFrame& out_frame) {
-    MFT_OUTPUT_DATA_BUFFER output_buffer{};
-    output_buffer.dwStreamID = 0;
+    // Iterative loop with bounded retries (prevents stack overflow on
+    // repeated MF_E_TRANSFORM_STREAM_CHANGE from malformed streams)
+    constexpr int kMaxStreamChangeRetries = 4;
 
-    MFT_OUTPUT_STREAM_INFO stream_info{};
-    if (FAILED(mft_->GetOutputStreamInfo(0, &stream_info))) return false;
+    for (int attempt = 0; attempt < kMaxStreamChangeRetries; ++attempt) {
+        MFT_OUTPUT_DATA_BUFFER output_buffer{};
+        output_buffer.dwStreamID = 0;
 
-    Microsoft::WRL::ComPtr<IMFSample> output_sample;
-    if (!(stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES)) {
-        if (FAILED(MFCreateSample(output_sample.GetAddressOf()))) return false;
+        MFT_OUTPUT_STREAM_INFO stream_info{};
+        if (FAILED(mft_->GetOutputStreamInfo(0, &stream_info))) return false;
 
-        Microsoft::WRL::ComPtr<IMFMediaBuffer> out_buf;
-        DWORD buf_size = (stream_info.cbSize > 0) ? stream_info.cbSize : (1920 * 1080 * 4);
-        if (FAILED(MFCreateMemoryBuffer(buf_size, out_buf.GetAddressOf()))) return false;
-        output_sample->AddBuffer(out_buf.Get());
-        output_buffer.pSample = output_sample.Get();
+        Microsoft::WRL::ComPtr<IMFSample> output_sample;
+        if (!(stream_info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES)) {
+            if (FAILED(MFCreateSample(output_sample.GetAddressOf()))) return false;
+
+            Microsoft::WRL::ComPtr<IMFMediaBuffer> out_buf;
+            DWORD buf_size = (stream_info.cbSize > 0) ? stream_info.cbSize : (1920 * 1080 * 4);
+            if (FAILED(MFCreateMemoryBuffer(buf_size, out_buf.GetAddressOf()))) return false;
+            output_sample->AddBuffer(out_buf.Get());
+            output_buffer.pSample = output_sample.Get();
+        }
+
+        DWORD status = 0;
+        HRESULT hr = mft_->ProcessOutput(0, 1, &output_buffer, &status);
+
+        if (output_buffer.pEvents) output_buffer.pEvents->Release();
+
+        if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) return false;
+
+        if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
+            Logger::info("MFT stream change — renegotiating output type (attempt {})", attempt + 1);
+            if (!negotiate_output_type()) return false;
+            continue;  // retry with new output type
+        }
+
+        if (FAILED(hr)) {
+            Logger::error("ProcessOutput failed: 0x{:08X}", hr);
+            return false;
+        }
+
+        if (!output_buffer.pSample) return false;
+        return extract_frame_from_sample(output_buffer.pSample, out_frame);
     }
 
-    DWORD status = 0;
-    HRESULT hr = mft_->ProcessOutput(0, 1, &output_buffer, &status);
-
-    if (output_buffer.pEvents) output_buffer.pEvents->Release();
-
-    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) return false;
-
-    if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
-        Logger::info("MFT stream change — renegotiating output type");
-        if (!negotiate_output_type()) return false;
-        return try_get_output_frame(out_frame);
-    }
-
-    if (FAILED(hr)) {
-        Logger::error("ProcessOutput failed: 0x{:08X}", hr);
-        return false;
-    }
-
-    if (!output_buffer.pSample) return false;
-    return extract_frame_from_sample(output_buffer.pSample, out_frame);
+    Logger::error("MFT stream change retries exhausted");
+    return false;
 }
 
 bool MFVideoDecoder::extract_frame_from_sample(IMFSample* sample, DecodedFrame& out_frame) {
@@ -245,10 +262,10 @@ bool MFVideoDecoder::extract_frame_from_sample(IMFSample* sample, DecodedFrame& 
     LONG stride = output_stride_;
     if (stride <= 0) stride = static_cast<LONG>(width);
 
-    // Log buffer details once
-    static bool buffer_logged = false;
-    if (!buffer_logged) {
-        buffer_logged = true;
+    // Log buffer details once (atomic to avoid data race if called concurrently)
+    static std::atomic<bool> buffer_logged{false};
+    if (!buffer_logged.load(std::memory_order_relaxed)) {
+        buffer_logged.store(true, std::memory_order_relaxed);
         Logger::info("Decode buffer: {}x{}, stride={}, buf_size={}", width, height, stride, cur_len);
     }
 

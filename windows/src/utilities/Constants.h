@@ -100,9 +100,28 @@ constexpr uint64_t kFrameCheckIntervalMs = 500;
 constexpr double kAnimationDurationSec = 0.3;
 
 // --------------------------------------------------------------------------
-// Registry Keys
+// Instance Name — separates Debug (dev) and Release (installed) data.
+//
+// Debug builds use "Reflection-Dev" so dev testing never pollutes the
+// installed app's registry, WebView2 cache, firewall rules, or auto-start.
+// Follows the Chrome (Chrome/Chrome Canary) and VS Code (Code/Code Insiders)
+// pattern for build-variant isolation.
 // --------------------------------------------------------------------------
+#ifdef _DEBUG
+constexpr std::wstring_view kAppInstanceName = L"Reflection-Dev";
+constexpr std::wstring_view kRegistryRoot = L"Software\\Reflection-Dev";
+constexpr std::wstring_view kRunRegistryValueName = L"Reflection-Dev";
+constexpr std::wstring_view kWebViewSubdir = L"Reflection-Dev";
+#else
+constexpr std::wstring_view kAppInstanceName = L"Reflection";
 constexpr std::wstring_view kRegistryRoot = L"Software\\Reflection";
+constexpr std::wstring_view kRunRegistryValueName = L"Reflection";
+constexpr std::wstring_view kWebViewSubdir = L"Reflection";
+#endif
+
+// --------------------------------------------------------------------------
+// Registry Value Names (shared across all instances)
+// --------------------------------------------------------------------------
 constexpr std::wstring_view kRegKeyServerName = L"ServerName";
 constexpr std::wstring_view kRegKeyStartOnLogin = L"StartOnLogin";
 constexpr std::wstring_view kRegKeyMinimizeToTray = L"MinimizeToTray";
@@ -113,10 +132,9 @@ constexpr std::wstring_view kRegKeyMirrorWindowY = L"MirrorWindowY";
 constexpr std::wstring_view kRegKeyMirrorWindowW = L"MirrorWindowWidth";
 constexpr std::wstring_view kRegKeyMirrorWindowH = L"MirrorWindowHeight";
 
-// Auto-start registry path
+// Auto-start registry path (shared system key — only the VALUE name is instance-qualified)
 constexpr std::wstring_view kRunRegistryPath =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-constexpr std::wstring_view kRunRegistryValueName = L"Reflection";
 
 // --------------------------------------------------------------------------
 // Update Checker
