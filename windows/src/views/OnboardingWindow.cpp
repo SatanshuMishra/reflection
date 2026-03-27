@@ -8,47 +8,81 @@
 #include "utilities/Constants.h"
 #include "utilities/Logger.h"
 #include "utilities/NameGenerator.h"
+#include "utilities/WinUtils.h"
 
 #include <dwmapi.h>
 #include <shellapi.h>
 
 #pragma comment(lib, "dwmapi.lib")
 
+// Conditional defines for older Windows SDKs (< 10.0.22000)
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+#ifndef DWMWCP_ROUND
+#define DWMWCP_ROUND 2
+#endif
+
 namespace reflection {
 
 namespace {
 
-/// Simple JSON builder (avoids nlohmann dependency for minimal overhead)
-std::wstring make_json(const std::string& type,
-                        const std::string& key = "",
-                        const std::string& value = "") {
-    std::string json = "{\"type\":\"" + type + "\"";
-    if (!key.empty()) {
-        json += ",\"" + key + "\":\"" + value + "\"";
-    }
-    json += "}";
-    return std::wstring(json.begin(), json.end());
-}
-
-std::string wstring_to_string(const std::wstring& ws) {
+/// Escape a string for safe embedding in a JSON string value.
+/// Handles: backslash, double-quote, and control characters.
+std::string json_escape(const std::string& s) {
     std::string result;
-    result.reserve(ws.size());
-    for (wchar_t c : ws) {
-        result += static_cast<char>(c & 0x7F);
+    result.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '"':  result += "\\\""; break;
+            case '\\': result += "\\\\"; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    // Skip non-printable control characters
+                } else {
+                    result += c;
+                }
+                break;
+        }
     }
     return result;
 }
 
+/// Simple JSON builder with proper escaping for string values.
+std::wstring make_json(const std::string& type,
+                        const std::string& key = "",
+                        const std::string& value = "") {
+    std::string json = "{\"type\":\"" + json_escape(type) + "\"";
+    if (!key.empty()) {
+        json += ",\"" + json_escape(key) + "\":\"" + json_escape(value) + "\"";
+    }
+    json += "}";
+    return win_utils::utf8_to_wide(json);
+}
+
 /// Parse a simple JSON string to find a string value for a key.
-/// Minimal parser — only handles flat JSON with string values.
+/// Handles escaped quotes within values.
 std::string json_get_string(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\":\"";
     auto pos = json.find(search);
     if (pos == std::string::npos) return "";
     pos += search.size();
-    auto end = json.find('"', pos);
-    if (end == std::string::npos) return "";
-    return json.substr(pos, end - pos);
+    // Find closing quote, skipping escaped quotes
+    std::string result;
+    for (size_t i = pos; i < json.size(); ++i) {
+        if (json[i] == '\\' && i + 1 < json.size()) {
+            result += json[i + 1];
+            ++i;
+        } else if (json[i] == '"') {
+            break;
+        } else {
+            result += json[i];
+        }
+    }
+    return result;
 }
 
 std::string json_get_type(const std::string& json) {
@@ -114,8 +148,8 @@ bool OnboardingWindow::show(HINSTANCE instance, AppSettings& settings) {
     ThemeManager::apply_dark_title_bar(hwnd_, true);
 
     // Apply rounded corners on Windows 11
-    DWORD corner_pref = 2; // DWMWCP_ROUND
-    DwmSetWindowAttribute(hwnd_, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */,
+    DWORD corner_pref = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE,
                           &corner_pref, sizeof(corner_pref));
 
     // Create WebView2 host
@@ -229,7 +263,7 @@ LRESULT CALLBACK OnboardingWindow::wnd_proc(HWND hwnd, UINT msg,
 }
 
 void OnboardingWindow::on_message_from_webview(const std::wstring& json_w) {
-    std::string json = wstring_to_string(json_w);
+    std::string json = win_utils::wide_to_utf8(json_w);
     std::string type = json_get_type(json);
 
     Logger::info("Onboarding message: type={}", type);
@@ -237,8 +271,7 @@ void OnboardingWindow::on_message_from_webview(const std::wstring& json_w) {
     if (type == "setServerName") {
         std::string name = json_get_string(json, "name");
         if (!name.empty()) {
-            std::wstring wname(name.begin(), name.end());
-            settings_->set_server_name(wname);
+            settings_->set_server_name(win_utils::utf8_to_wide(name));
             Logger::info("Server name set to: {}", name);
         }
     } else if (type == "generateName") {
@@ -263,24 +296,37 @@ void OnboardingWindow::on_message_from_webview(const std::wstring& json_w) {
 }
 
 void OnboardingWindow::configure_firewall() {
-    // Get the path to the current executable
-    wchar_t exe_path[MAX_PATH];
-    GetModuleFileName(nullptr, exe_path, MAX_PATH);
+    // Get the path to the current executable (zero-initialized buffer)
+    wchar_t exe_path[MAX_PATH]{};
+    DWORD path_len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    if (path_len == 0 || path_len == MAX_PATH) {
+        Logger::error("GetModuleFileName failed or truncated: {}", GetLastError());
+        webview_->post_message(
+            L"{\"type\":\"firewallResult\",\"success\":false,"
+            L"\"message\":\"Could not determine executable path\"}");
+        return;
+    }
+
+    // Sanitize: reject path if it contains embedded quotes (injection vector)
+    std::wstring path(exe_path);
+    if (path.find(L'"') != std::wstring::npos) {
+        Logger::error("Executable path contains invalid characters — aborting firewall config");
+        webview_->post_message(
+            L"{\"type\":\"firewallResult\",\"success\":false,"
+            L"\"message\":\"Invalid executable path\"}");
+        return;
+    }
 
     // Build netsh arguments — run netsh.exe directly (not via cmd.exe)
     // to avoid shell quoting issues and multiple process spawns.
     std::wstring netsh_args =
         L"advfirewall firewall add rule "
-        L"name=\"Reflection\" dir=in action=allow "
-        L"program=\"" + std::wstring(exe_path) + L"\" "
+        L"name=\"" + std::wstring(constants::kAppInstanceName) + L"\" dir=in action=allow "
+        L"program=\"" + path + L"\" "
         L"enable=yes";
 
-    // CRITICAL: Store the args string in a local variable so .c_str()
-    // remains valid for the lifetime of the ShellExecuteEx call.
-    // (A temporary std::wstring would be destroyed before ShellExecuteEx runs.)
-
     Logger::info("Configuring firewall: netsh.exe {}",
-                 std::string(netsh_args.begin(), netsh_args.end()));
+                 win_utils::wide_to_utf8(netsh_args));
 
     // Run netsh.exe elevated directly (triggers single UAC prompt)
     SHELLEXECUTEINFO sei = {};
@@ -363,8 +409,9 @@ void OnboardingWindow::mark_completed() {
 
 std::wstring OnboardingWindow::get_assets_path() {
     // Get the directory of the current executable
-    wchar_t exe_path[MAX_PATH];
-    GetModuleFileName(nullptr, exe_path, MAX_PATH);
+    wchar_t exe_path[MAX_PATH]{};
+    DWORD len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) return L".";
 
     std::wstring path(exe_path);
     auto last_slash = path.find_last_of(L'\\');

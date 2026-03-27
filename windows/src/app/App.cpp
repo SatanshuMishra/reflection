@@ -19,6 +19,10 @@
 #include "views/StatusWindow.h"
 #include "utilities/Constants.h"
 #include "utilities/Logger.h"
+#include "utilities/SessionDetector.h"
+#include "utilities/WinUtils.h"
+
+#include <winsparkle/winsparkle.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -27,6 +31,9 @@
 #include <ws2tcpip.h>
 #include <Windows.h>
 #include <iphlpapi.h>
+#include <wtsapi32.h>
+
+#pragma comment(lib, "wtsapi32.lib")
 
 #include <vector>
 
@@ -35,6 +42,10 @@ namespace reflection {
 App::App(HINSTANCE instance)
     : instance_(instance)
 {
+}
+
+const AppSettings& App::settings() const {
+    return *settings_;
 }
 
 App::~App() {
@@ -51,6 +62,7 @@ App::~App() {
     status_window_.reset();
 
     if (message_hwnd_) {
+        WTSUnRegisterSessionNotification(message_hwnd_);
         DestroyWindow(message_hwnd_);
         message_hwnd_ = nullptr;
     }
@@ -66,6 +78,11 @@ bool App::init(int /*cmd_show*/) {
         Logger::error("Failed to create message window");
         return false;
     }
+
+    // Detect initial session type (console or RDP)
+    current_render_mode_ = SessionDetector::current_render_mode();
+    Logger::info("Initial session type: {}",
+                 SessionDetector::render_mode_name(current_render_mode_));
 
     // --- Onboarding (first-run only) ---
     if (!OnboardingWindow::is_completed()) {
@@ -139,13 +156,17 @@ bool App::create_message_window() {
 
     RegisterClassEx(&wc);
 
+    // Use a hidden top-level window (not HWND_MESSAGE) so we receive
+    // WM_WTSSESSION_CHANGE notifications for RDP/console transitions.
+    // HWND_MESSAGE windows don't participate in the window hierarchy
+    // and may not receive broadcast/session messages.
     message_hwnd_ = CreateWindowEx(
         0,
         constants::kAppWindowClass.data(),
         constants::kAppName.data(),
-        0,
+        WS_POPUP,
         0, 0, 0, 0,
-        HWND_MESSAGE,
+        nullptr,
         nullptr,
         instance_,
         this
@@ -155,6 +176,13 @@ bool App::create_message_window() {
         Logger::error("CreateWindowEx failed for message window: {}",
                       GetLastError());
         return false;
+    }
+
+    // Register for session change notifications (RDP ↔ console transitions)
+    if (!WTSRegisterSessionNotification(message_hwnd_, NOTIFY_FOR_THIS_SESSION)) {
+        Logger::warn("WTSRegisterSessionNotification failed: {} -- "
+                      "session transitions will not be detected",
+                      GetLastError());
     }
 
     Logger::debug("Message window created (HWND_MESSAGE)");
@@ -194,6 +222,11 @@ void App::on_tray_menu(int menu_item_id) {
             }
             break;
 
+        case SystemTray::kMenuCheckUpdates:
+            Logger::info("Check for updates requested from tray menu");
+            win_sparkle_check_update_with_ui();
+            break;
+
         default:
             Logger::debug("Unknown tray menu item: {}", menu_item_id);
             break;
@@ -215,6 +248,15 @@ LRESULT CALLBACK App::message_wnd_proc(
             PostQuitMessage(0);
             return 0;
 
+        case WM_WTSSESSION_CHANGE: {
+            auto* app = reinterpret_cast<App*>(
+                GetWindowLongPtr(hwnd, GWLP_USERDATA));
+            if (app) {
+                app->on_session_changed(wp);
+            }
+            return 0;
+        }
+
         default:
             break;
     }
@@ -231,6 +273,20 @@ LRESULT CALLBACK App::message_wnd_proc(
                     app->system_tray_->show_context_menu(hwnd);
                     break;
                 case WM_LBUTTONDBLCLK:
+                    break;
+                case NIN_BALLOONUSERCLICK:
+                    if (app->pending_render_mode_switch_.has_value()) {
+                        app->rebuild_pipeline_for_mode(
+                            app->pending_render_mode_switch_.value());
+                        app->pending_render_mode_switch_.reset();
+                    }
+                    break;
+                case NIN_BALLOONTIMEOUT:
+                    if (app->pending_render_mode_switch_.has_value()) {
+                        Logger::info("User dismissed session switch notification "
+                                      "-- keeping current render mode");
+                        app->pending_render_mode_switch_.reset();
+                    }
                     break;
                 default:
                     break;
@@ -333,10 +389,20 @@ void App::on_ipad_connected() {
         return;
     }
 
+    // Sanitize device name: strip non-printable characters, limit length
+    std::string safe_name;
+    safe_name.reserve(device_name.size());
+    for (char c : device_name) {
+        if (static_cast<unsigned char>(c) >= 0x20 && safe_name.size() < 64) {
+            safe_name += c;
+        }
+    }
+    if (safe_name.empty()) safe_name = "iPad";
+    device_name_cache_ = safe_name;
+
     // Create the mirror window (lightweight — no D3D11 renderer, GStreamer renders into it)
     mirror_window_ = std::make_unique<MirrorWindow>();
-    std::wstring title = L"Reflection -- " +
-        std::wstring(device_name.begin(), device_name.end());
+    std::wstring title = L"Reflection -- " + win_utils::utf8_to_wide(safe_name);
 
     if (!mirror_window_->create(instance_, title, message_hwnd_)) {
         Logger::error("Failed to create mirror window");
@@ -345,11 +411,13 @@ void App::on_ipad_connected() {
     }
 
 #ifdef USE_UXPLAY
-    // Initialize GStreamer pipeline — handles ALL decode + render on GPU
+    // Initialize GStreamer pipeline with session-appropriate video sink
+    current_render_mode_ = SessionDetector::current_render_mode();
     pipeline_ = std::make_unique<GStreamerPipeline>();
-    if (!pipeline_->init(mirror_window_->hwnd())) {
-        Logger::error("Failed to initialize GStreamer pipeline -- "
-                       "check GST_PLUGIN_PATH and bundled plugins");
+    if (!pipeline_->init(mirror_window_->hwnd(), current_render_mode_)) {
+        Logger::error("Failed to initialize GStreamer pipeline (mode={}) -- "
+                       "check GST_PLUGIN_PATH and bundled plugins",
+                       SessionDetector::render_mode_name(current_render_mode_));
         pipeline_.reset();
         // Use cleanup_mirror_session to safely destroy window
         // (sets mirror_active_=false first, preventing cascading restart)
@@ -357,24 +425,27 @@ void App::on_ipad_connected() {
         return;
     }
 
+    // Mark mirror session as active BEFORE start() so that video frames
+    // arriving on the RAOP thread can be buffered into GstAppSrc during
+    // the async PAUSED→PLAYING state transition. Without this, preroll
+    // never completes because no frames reach the appsrc.
+    mirror_active_ = true;
+
     // Start the pipeline (transitions to PLAYING state)
     pipeline_->start();
     Logger::info("GStreamer pipeline started -- rendering into mirror window");
 #endif
 
-    // Mark mirror session as active AFTER successful pipeline init
-    mirror_active_ = true;
-
     // Update tray and status window with connection state
-    std::wstring wdevice(device_name.begin(), device_name.end());
+    std::wstring wdevice = win_utils::utf8_to_wide(safe_name);
     if (system_tray_) {
         system_tray_->set_connection_state(true, wdevice);
     }
     if (status_window_) {
-        status_window_->set_connected(device_name);
+        status_window_->set_connected(safe_name);
     }
 
-    Logger::info("Mirror session started for: {}", device_name);
+    Logger::info("Mirror session started for: {}", safe_name);
 }
 
 void App::on_ipad_disconnected() {
@@ -432,7 +503,7 @@ void App::on_mirror_window_closed() {
     if (airplay_service_ && settings_) {
         const auto wname = settings_->server_name();
         const AirPlayServiceConfig config{
-            .server_name = std::string(wname.begin(), wname.end()),
+            .server_name = win_utils::wide_to_utf8(wname),
             .hardware_address = get_machine_mac_address(),
             .raop_port = constants::kRaopPort,
             .airplay_port = constants::kAirPlayPort,
@@ -449,7 +520,7 @@ void App::on_server_name_changed() {
     if (!settings_ || !airplay_service_) return;
 
     std::wstring wname = settings_->server_name();
-    std::string name(wname.begin(), wname.end());
+    std::string name = win_utils::wide_to_utf8(wname);
     Logger::info("Server name changed to '{}' -- restarting AirPlay service", name);
 
     // Update the system tray
@@ -473,6 +544,105 @@ void App::on_server_name_changed() {
     } else {
         Logger::info("AirPlay service restarted as '{}'", name);
     }
+}
+
+void App::on_session_changed(WPARAM session_event) {
+    // Only act on console↔remote transitions
+    if (session_event != WTS_CONSOLE_CONNECT &&
+        session_event != WTS_REMOTE_CONNECT) {
+        return;
+    }
+
+    const RenderMode new_mode = SessionDetector::current_render_mode();
+    if (new_mode == current_render_mode_) {
+        Logger::debug("Session event {} but render mode unchanged ({})",
+                       session_event,
+                       SessionDetector::render_mode_name(new_mode));
+        return;
+    }
+
+    Logger::info("Session transition detected: {} -> {}",
+                 SessionDetector::render_mode_name(current_render_mode_),
+                 SessionDetector::render_mode_name(new_mode));
+
+    current_render_mode_ = new_mode;
+
+    // If no active mirror session, just store for next connection
+    if (!mirror_active_) {
+        Logger::info("No active mirror session -- render mode stored for next connection");
+        return;
+    }
+
+    // Prompt the user via balloon tip — rebuild happens on click
+    pending_render_mode_switch_ = new_mode;
+    if (system_tray_) {
+        std::wstring balloon_msg = (new_mode == RenderMode::kRemote)
+            ? L"Switched to Remote Desktop. Click to switch video to RDP-compatible mode."
+            : L"Switched to console. Click to switch video to GPU rendering.";
+        system_tray_->show_balloon(L"Reflection", balloon_msg);
+    }
+}
+
+void App::rebuild_pipeline_for_mode(RenderMode new_mode) {
+    if (!mirror_active_) {
+        Logger::warn("rebuild_pipeline_for_mode called but no active session");
+        return;
+    }
+
+    Logger::info("Rebuilding pipeline for {} mode",
+                 SessionDetector::render_mode_name(new_mode));
+
+    // 1. Gate off data flow — frames will be dropped during rebuild
+    mirror_active_.store(false, std::memory_order_release);
+
+    // 2. Stop and destroy old pipeline
+    if (pipeline_) {
+        pipeline_->stop();
+        pipeline_.reset();
+    }
+
+    // 3. Destroy old mirror window (mirror_active_ is false, so WM_DESTROY
+    //    won't trigger on_mirror_window_closed — the guard catches it)
+    mirror_window_.reset();
+
+    // 4. Create new mirror window (fresh HWND needed for new video sink)
+    mirror_window_ = std::make_unique<MirrorWindow>();
+    std::wstring title = L"Reflection";
+    if (!device_name_cache_.empty()) {
+        title = L"Reflection -- " + win_utils::utf8_to_wide(device_name_cache_);
+    }
+
+    if (!mirror_window_->create(instance_, title, message_hwnd_)) {
+        Logger::error("Failed to recreate mirror window during pipeline rebuild");
+        if (system_tray_) {
+            system_tray_->show_balloon(L"Reflection",
+                                        L"Failed to rebuild video window");
+        }
+        return;
+    }
+
+    // 5. Create and init new pipeline with new render mode
+    pipeline_ = std::make_unique<GStreamerPipeline>();
+    if (!pipeline_->init(mirror_window_->hwnd(), new_mode)) {
+        Logger::error("Failed to init GStreamer pipeline with {} mode",
+                       SessionDetector::render_mode_name(new_mode));
+        pipeline_.reset();
+        mirror_window_.reset();
+        if (system_tray_) {
+            system_tray_->show_balloon(L"Reflection",
+                                        L"Failed to rebuild video pipeline");
+        }
+        return;
+    }
+
+    // 6. Resume data flow BEFORE start() so frames can buffer during preroll
+    current_render_mode_ = new_mode;
+    mirror_active_.store(true, std::memory_order_release);
+
+    pipeline_->start();
+
+    Logger::info("Pipeline rebuilt for {} mode -- resuming video",
+                 SessionDetector::render_mode_name(new_mode));
 }
 
 void App::cleanup_mirror_session() {
@@ -564,8 +734,9 @@ bool App::start_airplay_service() {
     airplay_service_->set_video_frame_callback(
         [this](const uint8_t* data, size_t size, uint64_t timestamp, uint8_t /*frame_type*/) {
             // Push H.264 NAL units directly to GStreamer — thread-safe via GstAppSrc.
-            // No queue, no decode thread, no CPU-side BGRA conversion needed.
-            if (pipeline_) {
+            // Guard: check mirror_active_ before accessing pipeline_ to prevent
+            // use-after-free when main thread resets pipeline_ in cleanup_mirror_session.
+            if (mirror_active_.load(std::memory_order_acquire) && pipeline_) {
                 pipeline_->push_video_data(data, size, timestamp);
             }
         });
@@ -573,17 +744,15 @@ bool App::start_airplay_service() {
     airplay_service_->set_audio_frame_callback(
         [this](const uint8_t* data, size_t size, uint64_t timestamp) {
             // Push audio directly to GStreamer audio pipeline
-            if (pipeline_) {
+            if (mirror_active_.load(std::memory_order_acquire) && pipeline_) {
                 pipeline_->push_audio_data(data, size, timestamp);
             }
         });
 
-    // Convert wstring server name to narrow string for AirPlay protocol.
-    // Must store the wstring in a local to avoid dangling iterators —
-    // server_name() returns by value, so each call creates a new temporary.
+    // Convert wstring server name to UTF-8 for AirPlay protocol.
     const auto wname = settings_ ? settings_->server_name() : L"Reflection";
     const AirPlayServiceConfig config{
-        .server_name = std::string(wname.begin(), wname.end()),
+        .server_name = win_utils::wide_to_utf8(wname),
         .hardware_address = get_machine_mac_address(),
         .raop_port = constants::kRaopPort,
         .airplay_port = constants::kAirPlayPort,

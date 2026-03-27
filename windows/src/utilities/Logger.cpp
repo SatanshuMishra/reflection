@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <format>
 #include <mutex>
+#include <share.h>
 
 namespace reflection {
 
@@ -39,7 +40,8 @@ void Logger::init() {
 
     // Also open a log file next to the executable for post-mortem analysis
     wchar_t exe_path[MAX_PATH]{};
-    if (GetModuleFileNameW(nullptr, exe_path, MAX_PATH) > 0) {
+    DWORD path_len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    if (path_len > 0 && path_len < MAX_PATH) {
         // Replace .exe with .log
         std::wstring log_path(exe_path);
         const auto dot_pos = log_path.rfind(L'.');
@@ -48,7 +50,9 @@ void Logger::init() {
         }
         log_path += L".log";
 
-        _wfopen_s(&g_log_file, log_path.c_str(), L"w");
+        // Open with _SH_DENYNO so other processes can read the log file
+        // while the app is running (e.g., for debugging)
+        g_log_file = _wfsopen(log_path.c_str(), L"w", _SH_DENYNO);
     }
 }
 
@@ -72,13 +76,13 @@ void Logger::log(std::string_view level, const std::string& message) {
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
 
-    std::tm local_time{};
-    localtime_s(&local_time, &time_t_now);
+    std::tm utc_time{};
+    gmtime_s(&utc_time, &time_t_now);
 
     const auto formatted = std::format(
-        "[{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03d}] [{}] {}\n",
-        local_time.tm_year + 1900, local_time.tm_mon + 1, local_time.tm_mday,
-        local_time.tm_hour, local_time.tm_min, local_time.tm_sec,
+        "[{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}.{:03d}Z] [{}] {}\n",
+        utc_time.tm_year + 1900, utc_time.tm_mon + 1, utc_time.tm_mday,
+        utc_time.tm_hour, utc_time.tm_min, utc_time.tm_sec,
         static_cast<int>(ms.count()),
         level, message
     );

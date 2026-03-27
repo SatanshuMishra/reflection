@@ -12,6 +12,7 @@ extern "C" {
 #include "logger.h"
 }
 
+#include <atomic>
 #include <cstring>
 
 namespace {
@@ -197,7 +198,7 @@ std::string UxPlayCore::get_public_key() const {
 }
 
 void UxPlayCore::stop() {
-    if (!running_.load() && !raop_) return;
+    if (!running_.load() || !raop_) return;
 
     Logger::info("UxPlayCore::stop");
 
@@ -247,10 +248,9 @@ void UxPlayCore::on_video_process(void* cls, raop_ntp_t* /*ntp*/, video_decode_s
         return;
     }
 
-    // Log first frame
-    static bool first_frame = true;
-    if (first_frame) {
-        first_frame = false;
+    // Log first frame (atomic to prevent data race from RAOP threads)
+    static std::atomic<bool> first_frame{true};
+    if (first_frame.exchange(false)) {
         const auto* d = data->data;
         if (data->data_len >= 5) {
             Logger::info("UxPlay first video frame: h265={}, nal_count={}, size={}, "
@@ -263,11 +263,11 @@ void UxPlayCore::on_video_process(void* cls, raop_ntp_t* /*ntp*/, video_decode_s
         }
     }
 
-    // Periodic frame count logging
-    static uint64_t frame_count = 0;
-    ++frame_count;
-    if (frame_count % 300 == 0) {
-        Logger::info("UxPlay video frames received: {}", frame_count);
+    // Periodic frame count logging (atomic to prevent data race from RAOP threads)
+    static std::atomic<uint64_t> frame_count{0};
+    uint64_t count = ++frame_count;
+    if (count % 300 == 0) {
+        Logger::info("UxPlay video frames received: {}", count);
     }
 
     VideoFrameCallback cb;

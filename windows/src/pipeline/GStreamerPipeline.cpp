@@ -3,11 +3,13 @@
 
 #include "pipeline/GStreamerPipeline.h"
 #include "utilities/Logger.h"
+#include "utilities/SessionDetector.h"
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/video/videooverlay.h>
 
+#include <atomic>
 #include <cstring>
 
 namespace reflection {
@@ -16,13 +18,17 @@ GStreamerPipeline::~GStreamerPipeline() {
     stop();
 }
 
-bool GStreamerPipeline::init(HWND window_handle) {
+bool GStreamerPipeline::init(HWND window_handle, RenderMode mode) {
     if (pipeline_) {
         Logger::warn("GStreamerPipeline::init called when already initialized");
         return true;
     }
 
     window_handle_ = window_handle;
+    render_mode_ = mode;
+
+    Logger::info("GStreamerPipeline::init with render_mode={}",
+                 SessionDetector::render_mode_name(mode));
 
     // Check for hardware decoder availability
     has_hw_decoder_ = probe_hw_decoder();
@@ -108,14 +114,37 @@ bool GStreamerPipeline::build_video_pipeline() {
     // Video convert (needed for SW decode → d3d11videosink format conversion)
     GstElement* videoconvert = gst_element_factory_make("videoconvert", "video-convert");
 
-    // Create video sink
-    video_sink_ = gst_element_factory_make("d3d11videosink", "video-sink");
-    if (!video_sink_) {
-        video_sink_ = gst_element_factory_make("autovideosink", "video-sink");
-    }
-    if (!video_sink_) {
-        Logger::error("Failed to create any video sink");
-        return false;
+    // Create video sink based on render mode — no silent fallback.
+    //
+    // Console: d3d11videosink (Direct3D 11 / DXGI — zero-copy GPU rendering)
+    // Remote:  d3dvideosink   (Direct3D 9 — captured by RDP's remoting layer)
+    //
+    // d3dvideosink is used for RDP instead of autovideosink because:
+    // 1. It implements GstVideoOverlay — renders into our MirrorWindow HWND
+    // 2. Direct3D 9 rendering is captured by RDP (unlike DXGI/D3D11)
+    // 3. autovideosink does NOT implement GstVideoOverlay and creates its
+    //    own window, which may not be visible over RDP
+    if (render_mode_ == RenderMode::kConsole) {
+        video_sink_ = gst_element_factory_make("d3d11videosink", "video-sink");
+        if (!video_sink_) {
+            Logger::error("d3d11videosink unavailable in console session -- "
+                           "check GPU drivers and GStreamer installation");
+            return false;
+        }
+        Logger::info("Using d3d11videosink (console/GPU mode)");
+    } else {
+        // Direct3D 9 sink — works over RDP and supports GstVideoOverlay
+        video_sink_ = gst_element_factory_make("d3dvideosink", "video-sink");
+        if (!video_sink_) {
+            Logger::warn("d3dvideosink unavailable -- trying glimagesink");
+            video_sink_ = gst_element_factory_make("glimagesink", "video-sink");
+        }
+        if (!video_sink_) {
+            Logger::error("No RDP-compatible video sink available -- "
+                           "check GStreamer installation");
+            return false;
+        }
+        Logger::info("Using d3dvideosink (remote/RDP mode)");
     }
 
     // Low-latency: don't sync to pipeline clock
@@ -146,9 +175,12 @@ bool GStreamerPipeline::build_video_pipeline() {
         }
     }
 
-    Logger::info("Video pipeline built: appsrc → h264parse → {} → {} → d3d11videosink",
+    const char* sink_name = (render_mode_ == RenderMode::kConsole)
+        ? "d3d11videosink" : "d3dvideosink";
+    Logger::info("Video pipeline built: appsrc → h264parse → {} → {} → {}",
                  has_hw_decoder_ ? "d3d11h264dec" : "avdec_h264",
-                 videoconvert ? "videoconvert" : "(direct)");
+                 videoconvert ? "videoconvert" : "(direct)",
+                 sink_name);
     return true;
 }
 
@@ -216,6 +248,11 @@ bool GStreamerPipeline::build_audio_pipeline() {
         audio_appsrc_ = nullptr;
         return false;
     }
+
+    // Add bus watch for audio pipeline errors (e.g., WASAPI exclusive mode)
+    GstBus* audio_bus = gst_pipeline_get_bus(GST_PIPELINE(audio_pipeline_));
+    gst_bus_add_watch(audio_bus, reinterpret_cast<GstBusFunc>(&on_bus_message), this);
+    gst_object_unref(audio_bus);
 
     // Start the audio pipeline immediately — it'll stay in PAUSED until data arrives,
     // but won't block the video pipeline.
@@ -308,10 +345,13 @@ void GStreamerPipeline::push_video_data(const uint8_t* data, size_t size,
     }
 
     GstMapInfo map;
-    if (gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
-        std::memcpy(map.data, data, size);
-        gst_buffer_unmap(buffer, &map);
+    if (!gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
+        gst_buffer_unref(buffer);
+        Logger::warn("gst_buffer_map failed for video frame (size={})", size);
+        return;
     }
+    std::memcpy(map.data, data, size);
+    gst_buffer_unmap(buffer, &map);
 
     // Let appsrc assign timestamps (do-timestamp=TRUE) for live streaming.
     // Manual NTP timestamps cause pipeline to stall on non-monotonic values.
@@ -320,10 +360,11 @@ void GStreamerPipeline::push_video_data(const uint8_t* data, size_t size,
 
     GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(video_appsrc_), buffer);
     if (ret != GST_FLOW_OK) {
-        static uint64_t error_count = 0;
-        if (++error_count % 100 == 1) {
+        static std::atomic<uint64_t> error_count{0};
+        uint64_t count = ++error_count;
+        if (count % 100 == 1) {
             Logger::warn("gst_app_src_push_buffer failed: ret={} (count={})",
-                         static_cast<int>(ret), error_count);
+                         static_cast<int>(ret), count);
         }
     }
 }
@@ -336,10 +377,13 @@ void GStreamerPipeline::push_audio_data(const uint8_t* data, size_t size,
     if (!buffer) return;
 
     GstMapInfo map;
-    if (gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
-        std::memcpy(map.data, data, size);
-        gst_buffer_unmap(buffer, &map);
+    if (!gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
+        gst_buffer_unref(buffer);
+        Logger::warn("gst_buffer_map failed for audio frame (size={})", size);
+        return;
     }
+    std::memcpy(map.data, data, size);
+    gst_buffer_unmap(buffer, &map);
 
     GST_BUFFER_PTS(buffer) = GST_CLOCK_TIME_NONE;
     GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;

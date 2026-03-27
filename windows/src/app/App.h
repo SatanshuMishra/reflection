@@ -8,7 +8,10 @@
 #endif
 #include <Windows.h>
 
+#include "utilities/SessionDetector.h"
+
 #include <array>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -42,6 +45,9 @@ public:
     bool init(int cmd_show);
     int run();
 
+    /// Access settings for external consumers (e.g., WinSparkle init).
+    [[nodiscard]] const AppSettings& settings() const;
+
 private:
     HINSTANCE instance_;
     HWND message_hwnd_ = nullptr;
@@ -60,7 +66,18 @@ private:
     /// True while a mirror session is actively running (set in on_ipad_connected,
     /// cleared in cleanup_mirror_session). Guards against stale WM_DESTROY
     /// messages from previous mirror windows triggering cascading restarts.
-    bool mirror_active_ = false;
+    /// Atomic because RAOP callback lambdas may access pipeline_ concurrently.
+    std::atomic<bool> mirror_active_ = false;
+
+    /// Current rendering mode (console = GPU, remote = software).
+    RenderMode current_render_mode_ = RenderMode::kConsole;
+
+    /// When a session transition is detected and the user is prompted,
+    /// the new mode is stored here until the user clicks the balloon.
+    std::optional<RenderMode> pending_render_mode_switch_;
+
+    /// Cached device name for window title during pipeline rebuild.
+    std::string device_name_cache_;
 
     bool create_message_window();
     void on_tray_menu(int menu_item_id);
@@ -71,6 +88,8 @@ private:
     void on_ipad_disconnected();
     void on_mirror_window_closed();
     void on_server_name_changed();
+    void on_session_changed(WPARAM session_event);
+    void rebuild_pipeline_for_mode(RenderMode new_mode);
     void cleanup_mirror_session();
 
     static LRESULT CALLBACK message_wnd_proc(

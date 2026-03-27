@@ -8,6 +8,7 @@
     "libplist",
     "fdk-aac",
     "gtest",
-    "pthreads"
+    "pthreads",
+    "winsparkle"
   ]
 }

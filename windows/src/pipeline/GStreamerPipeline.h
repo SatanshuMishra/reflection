@@ -37,7 +37,7 @@ public:
     GStreamerPipeline(const GStreamerPipeline&) = delete;
     GStreamerPipeline& operator=(const GStreamerPipeline&) = delete;
 
-    [[nodiscard]] bool init(HWND window_handle) override;
+    [[nodiscard]] bool init(HWND window_handle, RenderMode mode) override;
     void start() override;
     void stop() override;
     void push_video_data(const uint8_t* data, size_t size,
@@ -59,6 +59,7 @@ private:
     HWND window_handle_ = nullptr;
 
     bool has_hw_decoder_ = false;
+    RenderMode render_mode_ = RenderMode::kConsole;
 
     /// Build the video portion of the pipeline.
     [[nodiscard]] bool build_video_pipeline();

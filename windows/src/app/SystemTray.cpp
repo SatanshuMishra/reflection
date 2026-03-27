@@ -109,6 +109,8 @@ void SystemTray::show_context_menu(HWND hwnd) {
     AppendMenu(menu, MF_STRING, kMenuSettings, L"Settings...");
     AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(menu, MF_STRING, kMenuShowWindow, L"Show Reflection");
+    AppendMenu(menu, MF_STRING, kMenuCheckUpdates, L"Check for Updates...");
+    AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(menu, MF_STRING, kMenuQuit, L"Quit");
 
     // Required: set foreground so menu dismisses on click-away
@@ -128,6 +130,18 @@ void SystemTray::show_context_menu(HWND hwnd) {
     if (cmd > 0 && menu_callback_) {
         menu_callback_(cmd);
     }
+}
+
+void SystemTray::show_balloon(const std::wstring& title,
+                               const std::wstring& message) {
+    if (!installed_) return;
+
+    nid_.uFlags = NIF_INFO;
+    wcsncpy_s(nid_.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(nid_.szInfo, message.c_str(), _TRUNCATE);
+    nid_.dwInfoFlags = NIIF_INFO;
+
+    Shell_NotifyIcon(NIM_MODIFY, &nid_);
 }
 
 void SystemTray::set_menu_callback(MenuCallback callback) {

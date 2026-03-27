@@ -49,10 +49,15 @@ public:
     /// Update the server name shown in the context menu.
     void set_server_name(const std::wstring& name);
 
+    /// Show a balloon tip notification from the system tray icon.
+    /// The user can click the balloon to trigger NIN_BALLOONUSERCLICK.
+    void show_balloon(const std::wstring& title, const std::wstring& message);
+
     // Menu item IDs
     static constexpr int kMenuDisconnect = 1001;
     static constexpr int kMenuSettings = 1002;
     static constexpr int kMenuShowWindow = 1003;
+    static constexpr int kMenuCheckUpdates = 1004;
     static constexpr int kMenuQuit = 1005;
 
 private:

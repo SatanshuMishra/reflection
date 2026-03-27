@@ -61,6 +61,14 @@ void AppSettings::set_firewall_configured(bool configured) {
     write_bool(L"FirewallConfigured", configured);
 }
 
+bool AppSettings::auto_update_enabled() const {
+    return read_bool(constants::kRegKeyAutoUpdateEnabled.data(), true);
+}
+
+void AppSettings::set_auto_update_enabled(bool enabled) {
+    write_bool(constants::kRegKeyAutoUpdateEnabled.data(), enabled);
+}
+
 // -- Registry helpers --
 
 std::wstring AppSettings::read_string(
@@ -122,6 +130,12 @@ bool AppSettings::read_bool(const wchar_t* name, bool default_value) const {
 }
 
 void AppSettings::write_string(const wchar_t* name, const std::wstring& value) {
+    // Guard against oversized values that would overflow DWORD size computation
+    constexpr size_t kMaxValueLen = 1024;
+    if (value.size() > kMaxValueLen) {
+        return;  // silently reject oversized values
+    }
+
     HKEY key;
     if (RegCreateKeyEx(HKEY_CURRENT_USER, constants::kRegistryRoot.data(),
                        0, nullptr, 0, KEY_WRITE, nullptr, &key,

@@ -102,20 +102,24 @@ void ThemeManager::monitor_thread_func() {
         }
 
         // Wait for a change to the Personalize key
-        HANDLE events[2] = { stop_event_, nullptr };
-        events[1] = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        HANDLE change_event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+        if (!change_event) {
+            RegCloseKey(key);
+            continue;
+        }
 
         LONG result = RegNotifyChangeKeyValue(
             key, FALSE, REG_NOTIFY_CHANGE_LAST_SET,
-            events[1], TRUE);
+            change_event, TRUE);
 
         if (result == ERROR_SUCCESS) {
             // Wait for either the registry change or stop signal
+            HANDLE events[2] = { stop_event_, change_event };
             DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
 
             if (wait_result == WAIT_OBJECT_0) {
                 // Stop event signaled
-                CloseHandle(events[1]);
+                CloseHandle(change_event);
                 RegCloseKey(key);
                 break;
             }
@@ -133,7 +137,7 @@ void ThemeManager::monitor_thread_func() {
             }
         }
 
-        CloseHandle(events[1]);
+        CloseHandle(change_event);
         RegCloseKey(key);
     }
 }

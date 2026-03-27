@@ -37,6 +37,9 @@ function handleHostMessage(data) {
             if (typeof data.launchAtLogin === 'boolean') {
                 document.getElementById('toggleLaunchLogin').checked = data.launchAtLogin;
             }
+            if (typeof data.autoUpdateEnabled === 'boolean') {
+                document.getElementById('toggleAutoUpdate').checked = data.autoUpdateEnabled;
+            }
             break;
 
         case 'connected':
@@ -239,6 +242,10 @@ function setRunInBackground(enabled) {
 
 function setLaunchAtLogin(enabled) {
     sendToHost({ type: 'setLaunchAtLogin', enabled: enabled });
+}
+
+function setAutoUpdate(enabled) {
+    sendToHost({ type: 'setAutoUpdate', enabled: enabled });
 }
 
 // --- Window Controls ---

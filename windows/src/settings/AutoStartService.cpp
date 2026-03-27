@@ -31,7 +31,11 @@ bool AutoStartService::is_enabled() {
 bool AutoStartService::enable() {
     // Get our own executable path
     wchar_t exe_path[MAX_PATH]{};
-    GetModuleFileName(nullptr, exe_path, MAX_PATH);
+    DWORD len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    if (len == 0 || len == MAX_PATH) {
+        Logger::error("GetModuleFileName failed or truncated: {}", GetLastError());
+        return false;
+    }
 
     HKEY key;
     if (RegOpenKeyEx(HKEY_CURRENT_USER, constants::kRunRegistryPath.data(),
