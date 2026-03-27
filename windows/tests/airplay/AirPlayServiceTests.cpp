@@ -250,6 +250,32 @@ TEST_F(AirPlayServiceTest, DisconnectionCallbackWiredToCore) {
     EXPECT_EQ(disconnected_id, "iPad-123");
 }
 
+TEST_F(AirPlayServiceTest, VideoResetCallbackWiredToCore) {
+    bool reset_fired = false;
+    service_->set_video_reset_callback([&]() { reset_fired = true; });
+
+    service_->start(default_config());
+
+    EXPECT_EQ(mock_core_->set_video_reset_cb_count, 1);
+
+    mock_core_->simulate_video_reset();
+    EXPECT_TRUE(reset_fired);
+}
+
+TEST_F(AirPlayServiceTest, VideoResetCallbackPreservedOnRestart) {
+    int reset_count = 0;
+    service_->set_video_reset_callback([&]() { ++reset_count; });
+
+    service_->start(default_config());
+    mock_core_->simulate_video_reset();
+    EXPECT_EQ(reset_count, 1);
+
+    // Restart preserves stored callbacks — wire_callbacks_to_core() re-wires
+    service_->restart(default_config());
+    mock_core_->simulate_video_reset();
+    EXPECT_EQ(reset_count, 2);
+}
+
 // ---------------------------------------------------------------------------
 // Destructor cleanup
 // ---------------------------------------------------------------------------

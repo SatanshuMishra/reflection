@@ -23,6 +23,9 @@ set(TEST_SOURCES
 
     # Milestone 2 tests — native implementations
     mdns/NativeMdnsAdvertiserTests.cpp
+
+    # Integration tests — cross-component callback chains
+    integration/AirPlayPipelineIntegrationTests.cpp
 )
 
 # RPiPlayCore tests only when using RPiPlay backend
