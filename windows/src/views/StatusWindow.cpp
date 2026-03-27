@@ -401,20 +401,28 @@ void StatusWindow::configure_firewall() {
         return;
     }
 
-    std::wstring netsh_args =
-        L"advfirewall firewall add rule "
-        L"name=\"" + std::wstring(constants::kAppInstanceName) + L"\" dir=in action=allow "
+    // Idempotent: delete any existing rule first, then add the new one.
+    // netsh "add rule" never deduplicates — calling it twice creates two
+    // identical entries. The delete-then-add pattern prevents duplicates
+    // across installer + runtime rule creation. Both commands run in a
+    // single cmd.exe /c invocation so only one UAC prompt is shown.
+    const std::wstring rule_name = std::wstring(constants::kAppInstanceName);
+    std::wstring cmd_args =
+        L"/c netsh advfirewall firewall delete rule "
+        L"name=\"" + rule_name + L"\" >nul 2>&1 & "
+        L"netsh advfirewall firewall add rule "
+        L"name=\"" + rule_name + L"\" dir=in action=allow "
         L"program=\"" + path + L"\" "
         L"enable=yes";
 
-    Logger::info("Status window: configuring firewall");
+    Logger::info("Status window: configuring firewall (delete-then-add)");
 
     SHELLEXECUTEINFO sei = {};
     sei.cbSize = sizeof(sei);
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
     sei.lpVerb = L"runas";
-    sei.lpFile = L"netsh.exe";
-    sei.lpParameters = netsh_args.c_str();
+    sei.lpFile = L"cmd.exe";
+    sei.lpParameters = cmd_args.c_str();
     sei.nShow = SW_HIDE;
 
     bool success = false;

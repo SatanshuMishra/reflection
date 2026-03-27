@@ -227,9 +227,16 @@ LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
 
 } // namespace
 
-/// Delete WebView2 user data directory with path validation safeguards.
-/// SAFEGUARD: Only deletes if the path contains "\\Reflection\\" and
-/// starts with the system's LocalAppData directory.
+/// Delete ALL WebView2 user data under %LOCALAPPDATA%\Reflection(-Dev).
+///
+/// WebView2 creates multiple subdirectories (WebView2/, EBWebView/) in our
+/// app data folder. Deleting only WebView2/ leaves ~29 MB of EBWebView cache
+/// behind. The correct approach is to delete the entire parent directory.
+///
+/// SAFEGUARDS:
+///   S1: Path must contain "\Reflection" (or "\Reflection-Dev")
+///   S2: Path must start with the system's LocalAppData directory
+///   S3: Only the instance-specific subdirectory is deleted, never LocalAppData itself
 void delete_webview2_data() {
     wchar_t* app_data_raw = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &app_data_raw))) {
@@ -239,27 +246,34 @@ void delete_webview2_data() {
     std::wstring app_data(app_data_raw);
     CoTaskMemFree(app_data_raw);
 
-    std::wstring webview_path = app_data + L"\\" +
-        std::wstring(reflection::constants::kWebViewSubdir) + L"\\WebView2";
+    // Delete the entire app data directory (contains WebView2/, EBWebView/, etc.)
+    std::wstring app_data_dir = app_data + L"\\" +
+        std::wstring(reflection::constants::kWebViewSubdir);
 
-    // SAFEGUARD S2: Validate path contains our app name before deletion
-    if (webview_path.find(L"\\Reflection\\") == std::wstring::npos) {
-        reflection::Logger::error("SAFETY: WebView2 path missing \\Reflection\\ -- aborting delete");
+    // SAFEGUARD S1: Path must contain our app name
+    if (app_data_dir.find(L"\\Reflection") == std::wstring::npos) {
+        reflection::Logger::error("SAFETY: app data path missing \\Reflection -- aborting delete");
         return;
     }
 
-    // SAFEGUARD S2: Validate path starts with LocalAppData
-    if (webview_path.find(app_data) != 0) {
-        reflection::Logger::error("SAFETY: WebView2 path not under LocalAppData -- aborting delete");
+    // SAFEGUARD S2: Path must start with LocalAppData
+    if (app_data_dir.find(app_data) != 0) {
+        reflection::Logger::error("SAFETY: app data path not under LocalAppData -- aborting delete");
+        return;
+    }
+
+    // SAFEGUARD S3: Path must be longer than LocalAppData itself
+    if (app_data_dir.length() <= app_data.length() + 1) {
+        reflection::Logger::error("SAFETY: app data path too short -- aborting delete");
         return;
     }
 
     std::error_code ec;
-    auto removed = std::filesystem::remove_all(webview_path, ec);
+    auto removed = std::filesystem::remove_all(app_data_dir, ec);
     if (ec) {
-        reflection::Logger::warn("--reset-all: WebView2 delete failed: {}", ec.message());
+        reflection::Logger::warn("--reset-all: app data delete failed: {}", ec.message());
     } else {
-        reflection::Logger::info("--reset-all: deleted WebView2 data ({} items)", removed);
+        reflection::Logger::info("--reset-all: deleted app data directory ({} items)", removed);
     }
 }
 
@@ -315,10 +329,12 @@ void reset_all_data() {
     // 3. Delete WebView2 user data (with path validation)
     delete_webview2_data();
 
-    // 4. Delete log file
+    // 4. Delete log file — shutdown the logger FIRST so the file is not locked.
+    // Logger::init() opens the log with _SH_DENYNO (shared read/write) but
+    // DeleteFileW requires no open handles without FILE_SHARE_DELETE.
+    reflection::Logger::info("--reset-all: cleanup complete -- shutting down logger");
+    reflection::Logger::shutdown();
     delete_log_file();
-
-    reflection::Logger::info("--reset-all: cleanup complete -- app will start fresh");
 }
 
 /// Delete the Windows Firewall rule for Reflection (requires UAC elevation).
@@ -374,15 +390,14 @@ void reset_firewall() {
 bool handle_dev_flags(LPWSTR cmd_line) {
     std::wstring args = cmd_line ? cmd_line : L"";
 
-    // --uninstall-cleanup: full cleanup, then exit without launching UI.
-    // Called by Inno Setup / WiX during uninstall to ensure all user data
-    // is removed before the installer deletes application files.
+    // --uninstall-cleanup: clear user data, then exit without launching UI.
+    // Called by the installer's [UninstallRun] section. Handles registry,
+    // WebView2 cache, and log files. Does NOT reset the firewall rule —
+    // the installer handles that directly via netsh.exe with admin privileges,
+    // avoiding a redundant UAC prompt from ShellExecuteEx("runas").
     if (args.find(L"--uninstall-cleanup") != std::wstring::npos) {
-        reflection::Logger::info("--uninstall-cleanup: running full cleanup");
-        reset_all_data();
-        reset_firewall();
-        reflection::Logger::info("--uninstall-cleanup: done");
-        reflection::Logger::shutdown();
+        reflection::Logger::info("--uninstall-cleanup: running cleanup");
+        reset_all_data();  // Shuts down logger internally before deleting log
         return true;  // Signal caller to exit
     }
 
@@ -405,7 +420,8 @@ bool handle_dev_flags(LPWSTR cmd_line) {
 #endif
 
     if (do_reset_all) {
-        reset_all_data();
+        reset_all_data();  // Shuts down logger + deletes log file
+        reflection::Logger::init();  // Re-init logger for continued app startup
     } else if (has_reset_onboarding) {
         // Legacy: just clear the onboarding flag
         HKEY key;

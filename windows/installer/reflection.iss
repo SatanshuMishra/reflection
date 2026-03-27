@@ -47,6 +47,10 @@ UninstallDisplayName={#AppName}
 ; Visual polish
 WizardStyle=modern
 DisableProgramGroupPage=yes
+; Close running instances before install/uninstall via Restart Manager.
+; Defense-in-depth: [UninstallRun] also force-kills the process.
+CloseApplications=force
+CloseApplicationsFilter=*.exe,*.dll
 ; Allow user to choose custom install dir
 AllowNoIcons=yes
 ; Desktop shortcut and HKCU registry are intentionally per-user
@@ -83,7 +87,13 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 
 [Run]
 ; Configure Windows Firewall inbound rule for AirPlay connections.
-; Runs silently during install (admin context already established).
+; Delete-then-add ensures no duplicate rules accumulate across
+; reinstalls or when the app's UI also creates a rule at runtime.
+Filename: "netsh.exe"; \
+  Parameters: "advfirewall firewall delete rule name=""{#AppName}"""; \
+  Flags: runhidden; \
+  StatusMsg: "Configuring Windows Firewall..."
+
 Filename: "netsh.exe"; \
   Parameters: "advfirewall firewall add rule name=""{#AppName}"" dir=in action=allow program=""{app}\{#AppExeName}"" enable=yes profile=private,public"; \
   Flags: runhidden; \
@@ -95,17 +105,29 @@ Filename: "{app}\{#AppExeName}"; \
   Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-; Run the app's own cleanup first (defense-in-depth — handles edge cases
-; that static [Registry] and [UninstallDelete] sections might miss).
-; Must run BEFORE file deletion since the exe needs to exist.
+; Step 0: Force-terminate any running instances.
+; The app may be running from postinstall launch or system tray.
+; CloseApplications=force handles most cases via Restart Manager, but
+; taskkill is defense-in-depth for edge cases (tray icon, hung process).
+; /F = force, /IM = image name. Exit code 128 = "not found" (benign).
+Filename: "taskkill.exe"; \
+  Parameters: "/F /IM {#AppExeName}"; \
+  Flags: runhidden; \
+  RunOnceId: "KillRunningApp"
+
+; Step 1: Run the app's own cleanup (registry, WebView2 cache, log files).
+; NOTE: --uninstall-cleanup does NOT reset the firewall rule (Step 2
+; handles it directly with admin privileges, avoiding a redundant UAC prompt).
 Filename: "{app}\{#AppExeName}"; \
   Parameters: "--uninstall-cleanup"; \
   Flags: runhidden; \
   RunOnceId: "AppCleanup"
 
-; Remove firewall rule on uninstall
+; Step 2: Remove firewall rule. Uses name-only match (no program filter)
+; so it catches rules created by the installer AND by the app's UI,
+; regardless of which exe path was used when the rule was created.
 Filename: "netsh.exe"; \
-  Parameters: "advfirewall firewall delete rule name=""{#AppName}"" program=""{app}\{#AppExeName}"""; \
+  Parameters: "advfirewall firewall delete rule name=""{#AppName}"""; \
   Flags: runhidden; \
   RunOnceId: "RemoveFirewallRule"
 
@@ -113,9 +135,15 @@ Filename: "netsh.exe"; \
 ; Clean up log files and any runtime-generated data
 Type: files; Name: "{app}\reflection.log"
 Type: files; Name: "{app}\reflection.log.*"
+Type: files; Name: "{app}\Reflection.log"
+Type: files; Name: "{app}\Reflection.log.*"
 ; Remove plugins and assets dirs (installer created them)
 Type: filesandordirs; Name: "{app}\plugins"
 Type: filesandordirs; Name: "{app}\assets"
+; Remove the install directory itself if anything remains (defense-in-depth).
+; Inno Setup normally removes {app} only if empty. This catches runtime-
+; generated files that the installer didn't track.
+Type: filesandordirs; Name: "{app}"
 ; Remove WebView2 user data (browser cache, cookies, localStorage)
 Type: filesandordirs; Name: "{localappdata}\{#AppName}"
 
