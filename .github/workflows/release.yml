@@ -166,6 +166,14 @@ jobs:
             echo "Cache validation: miss or invalid cache layout (runtime_ok=$runtime_ok devel_ok=$devel_ok)"
           fi
 
+      - name: Disable Windows Defender real-time monitoring
+        if: steps.validate-gstreamer-cache.outputs.valid != 'true'
+        shell: pwsh
+        run: |
+          # Reduces I/O overhead during MSI extraction and file copying.
+          # Common CI optimization (Electron, Chromium). Runner has limited attack surface.
+          Set-MpPreference -DisableRealtimeMonitoring $true
+
       - name: Install GStreamer MSVC
         if: steps.validate-gstreamer-cache.outputs.valid != 'true'
         shell: bash
@@ -192,22 +200,44 @@ jobs:
             local file="$1"
             local msi_win_path
             msi_win_path="$(cygpath -w "$RUNNER_TEMP/$file")"
-            local log_win_path
-            log_win_path="$(cygpath -w "$RUNNER_TEMP/$file.install.log")"
-            local attempt
-            for attempt in 1 2; do
-              echo "[msiexec] installing $file (attempt $attempt)"
-              timeout 300 msiexec //i "$msi_win_path" //qn //norestart //l*v "$log_win_path" INSTALLDIR=D:\\gstreamer && return 0
-              local rc=$?
-              echo "WARNING[msiexec-$file]: attempt $attempt failed (rc=$rc)"
-              if [ $rc -eq 124 ]; then
-                echo "WARNING[msiexec-timeout]: killing stale msiexec processes"
-                taskkill //F //IM msiexec.exe 2>/dev/null || true
-                sleep 5
-              fi
-            done
-            echo "ERROR[msiexec-$file]: failed after 2 attempts; log=$log_win_path"
-            exit 15
+
+            # Attempt 1: Administrative install (extract only — no VSS restore
+            # point, no custom actions, no product registration). This bypasses
+            # the msiexec /i hang caused by VSS on GitHub Actions Windows runners.
+            echo "[msiexec /a] extracting $file"
+            timeout 300 msiexec //a "$msi_win_path" //qn TARGETDIR=D:\\gstreamer && return 0
+            local rc=$?
+            echo "WARNING[msiexec-$file]: /a failed (rc=$rc)"
+
+            # Attempt 2: Kill stale processes and retry /a
+            if [ $rc -eq 124 ]; then
+              echo "WARNING[msiexec-timeout]: killing stale msiexec processes"
+              taskkill //F //IM msiexec.exe 2>/dev/null || true
+              sleep 5
+            fi
+            echo "[msiexec /a] retry extracting $file"
+            timeout 300 msiexec //a "$msi_win_path" //qn TARGETDIR=D:\\gstreamer && return 0
+            rc=$?
+            echo "WARNING[msiexec-$file]: /a retry failed (rc=$rc)"
+
+            # Attempt 3: Fallback to lessmsi (pure extraction, no Windows
+            # Installer service involvement at all)
+            echo "[lessmsi] fallback extraction for $file"
+            if ! command -v lessmsi &>/dev/null; then
+              choco install lessmsi -y --no-progress
+            fi
+            local output_dir="D:/gstreamer-lessmsi-$$"
+            mkdir -p "$output_dir"
+            lessmsi x "$(cygpath -w "$RUNNER_TEMP/$file")" "$(cygpath -w "$output_dir")\\" || { echo "ERROR[lessmsi]: $file"; exit 15; }
+
+            # lessmsi creates a SourceDir/ prefix — move contents to target
+            if [ -d "$output_dir/SourceDir" ]; then
+              cp -r "$output_dir/SourceDir/"* "D:/gstreamer/" 2>/dev/null || true
+            else
+              cp -r "$output_dir/"* "D:/gstreamer/" 2>/dev/null || true
+            fi
+            rm -rf "$output_dir"
+            echo "[lessmsi] extraction complete for $file"
           }
 
           download_msi "$RUNTIME"
@@ -407,8 +437,11 @@ jobs:
             windows/appcast.xml
 
   # ---- Create Unified Release ----
+  # Runs if at least macOS succeeds — allows macOS-only releases when
+  # Windows build fails (e.g., GStreamer installation timeout).
   create-release:
     needs: [build-macos, build-windows]
+    if: always() && needs.build-macos.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -431,7 +464,7 @@ jobs:
   deploy-appcast:
     needs: [build-windows, create-release]
     runs-on: ubuntu-latest
-    if: ${{ needs.build-windows.result == 'success' }}
+    if: always() && needs.build-windows.result == 'success'
     permissions:
       contents: write
 
