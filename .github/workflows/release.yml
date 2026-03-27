@@ -366,12 +366,45 @@ jobs:
           }
           Write-Host "Validated artifacts: $zip and $($installer.Name)"
 
+      - name: Download winsparkle-tool for Ed25519 signing
+        shell: pwsh
+        run: |
+          $url = "https://github.com/vslavik/winsparkle/releases/download/v0.9.2/WinSparkle-0.9.2.zip"
+          Invoke-WebRequest -Uri $url -OutFile WinSparkle-dist.zip
+          Expand-Archive -Path WinSparkle-dist.zip -DestinationPath WinSparkle-dist
+
+      - name: Sign installer and generate appcast
+        if: ${{ env.WINSPARKLE_EDDSA_PRIVATE_KEY != '' }}
+        shell: pwsh
+        env:
+          WINSPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.WINSPARKLE_EDDSA_PRIVATE_KEY }}
+        run: |
+          # Write private key to temp file (deleted immediately after use)
+          $keyFile = [System.IO.Path]::GetTempFileName()
+          try {
+              [System.IO.File]::WriteAllText($keyFile, $env:WINSPARKLE_EDDSA_PRIVATE_KEY)
+
+              $installer = Get-ChildItem "installer/Output/Reflection-*-Setup.exe" | Select-Object -First 1
+              $toolPath = Get-ChildItem "WinSparkle-dist/WinSparkle-*/bin/winsparkle-tool.exe" | Select-Object -First 1
+
+              .\scripts\generate-appcast.ps1 `
+                  -Version "${{ steps.version.outputs.version }}" `
+                  -InstallerPath $installer.FullName `
+                  -PrivateKeyPath $keyFile `
+                  -WinSparkleToolPath $toolPath.FullName `
+                  -OutputPath "appcast.xml" `
+                  -RepoUrl "https://github.com/SatanshuMishra/reflection"
+          } finally {
+              Remove-Item $keyFile -Force -ErrorAction SilentlyContinue
+          }
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows
           path: |
             windows/Reflection-*.zip
             windows/installer/Output/Reflection-*-Setup.exe
+            windows/appcast.xml
 
   # ---- Create Unified Release ----
   create-release:
@@ -393,3 +426,36 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---- Deploy Auto-Update Appcast to GitHub Pages ----
+  deploy-appcast:
+    needs: [build-windows, create-release]
+    runs-on: ubuntu-latest
+    if: ${{ needs.build-windows.result == 'success' }}
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-windows
+          path: artifacts
+
+      - name: Prepare appcast for GitHub Pages
+        run: |
+          mkdir -p pages
+          if [ -f artifacts/windows/appcast.xml ]; then
+            cp artifacts/windows/appcast.xml pages/
+            echo "Appcast found and staged for deployment"
+          else
+            echo "No appcast.xml found -- skipping deployment"
+            exit 0
+          fi
+
+      - name: Deploy appcast to GitHub Pages
+        if: ${{ hashFiles('pages/appcast.xml') != '' }}
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./pages
+          keep_files: true
