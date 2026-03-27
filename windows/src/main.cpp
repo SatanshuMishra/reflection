@@ -9,6 +9,9 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <objbase.h>
+#include <objidl.h>
+
+#include <gdiplus.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -73,6 +76,28 @@ struct ComGuard {
 
     ComGuard(const ComGuard&) = delete;
     ComGuard& operator=(const ComGuard&) = delete;
+};
+
+/// RAII wrapper for GDI+ initialization.
+/// Required by MirrorOverlay for rendering the hover toolbar.
+struct GdiplusGuard {
+    ULONG_PTR token = 0;
+    bool initialized = false;
+
+    GdiplusGuard() {
+        Gdiplus::GdiplusStartupInput input{};
+        initialized =
+            (Gdiplus::GdiplusStartup(&token, &input, nullptr) == Gdiplus::Ok);
+    }
+
+    ~GdiplusGuard() {
+        if (initialized) {
+            Gdiplus::GdiplusShutdown(token);
+        }
+    }
+
+    GdiplusGuard(const GdiplusGuard&) = delete;
+    GdiplusGuard& operator=(const GdiplusGuard&) = delete;
 };
 
 #ifdef USE_UXPLAY
@@ -512,6 +537,11 @@ int WINAPI wWinMain(
     _In_ LPWSTR cmd_line,
     _In_ int cmd_show
 ) {
+    // Per-monitor DPI awareness V2 — must be set before any window creation.
+    // Prevents Windows from bitmap-scaling the app on high-DPI displays,
+    // ensuring crisp text, icons, and video rendering.
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     SetUnhandledExceptionFilter(crash_filter);
     reflection::Logger::init();
     reflection::Logger::info("Reflection for Windows starting...");
@@ -532,6 +562,12 @@ int WINAPI wWinMain(
     const ComGuard com;
     if (!com.initialized) {
         reflection::Logger::error("Failed to initialize COM");
+        return 1;
+    }
+
+    const GdiplusGuard gdiplus;
+    if (!gdiplus.initialized) {
+        reflection::Logger::error("Failed to initialize GDI+");
         return 1;
     }
 

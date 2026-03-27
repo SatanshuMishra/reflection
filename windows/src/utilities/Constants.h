@@ -89,6 +89,48 @@ constexpr float kBgClearColor[4] = {
 };
 
 // --------------------------------------------------------------------------
+// Mirror Window Overlay (hover toolbar)
+// --------------------------------------------------------------------------
+constexpr int kOverlayHeight = 48;
+constexpr int kOverlayButtonWidth = 46;
+constexpr int kOverlayPaddingX = 12;
+constexpr int kOverlayTextSize = 13;     // Segoe UI, points
+
+// Overlay background: slightly lighter than app background (#1E1E22)
+constexpr uint8_t kOverlayBgR = 0x1E;
+constexpr uint8_t kOverlayBgG = 0x1E;
+constexpr uint8_t kOverlayBgB = 0x22;
+constexpr uint8_t kOverlayBgAlpha = 0xD9;  // ~85% opacity
+
+// As COLORREF (BGR format for Win32 GDI)
+constexpr uint32_t kOverlayBgColor =
+    (kOverlayBgB << 16) | (kOverlayBgG << 8) | kOverlayBgR;
+
+// Button hover highlight (#2A2A30)
+constexpr uint32_t kOverlayHoverColor =
+    (0x30u << 16) | (0x2Au << 8) | 0x2Au;
+
+// Close button hover (Windows standard red #C42B1C)
+constexpr uint32_t kOverlayCloseHoverColor =
+    (0x1Cu << 16) | (0x2Bu << 8) | 0xC4u;
+
+// Overlay auto-hide delay after mouse leaves (milliseconds)
+constexpr uint32_t kOverlayHideDelayMs = 1000;
+
+// Timer IDs (kRenderTimerId = 1 already used)
+constexpr uintptr_t kOverlayHideTimerId = 2;
+constexpr uintptr_t kOverlayFadeTimerId = 3;
+
+// Fade animation timing
+constexpr uint32_t kOverlayFadeStepMs = 16;       // ~60fps timer interval
+constexpr uint32_t kOverlayFadeDurationMs = 200;   // Total fade duration
+
+// Custom message: overlay child reports mouse activity to parent.
+// Uses WM_APP range (0x8000+) for safe inter-window communication.
+// WM_USER (0x0400) is reserved for intra-class use only.
+constexpr uint32_t kWmOverlayMouseActivity = 0x8000 + 10;  // WM_APP + 10
+
+// --------------------------------------------------------------------------
 // Timing (matching macOS FrameStaleMonitor)
 // --------------------------------------------------------------------------
 constexpr double kFrameStaleThresholdSec = 1.0;
