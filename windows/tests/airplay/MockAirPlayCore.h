@@ -19,6 +19,7 @@ public:
     int start_call_count = 0;
     int stop_call_count = 0;
     int set_video_cb_count = 0;
+    int set_video_reset_cb_count = 0;
     int set_audio_cb_count = 0;
     int set_conn_cb_count = 0;
     int set_disconn_cb_count = 0;
@@ -28,6 +29,7 @@ public:
 
     // Stored callbacks (so tests can simulate events)
     VideoFrameCallback video_callback;
+    VideoResetCallback video_reset_callback;
     AudioFrameCallback audio_callback;
     ConnectionCallback connection_callback;
     DisconnectionCallback disconnection_callback;
@@ -61,6 +63,11 @@ public:
     void set_video_callback(VideoFrameCallback callback) override {
         ++set_video_cb_count;
         video_callback = std::move(callback);
+    }
+
+    void set_video_reset_callback(VideoResetCallback callback) override {
+        ++set_video_reset_cb_count;
+        video_reset_callback = std::move(callback);
     }
 
     void set_audio_callback(AudioFrameCallback callback) override {
@@ -101,6 +108,12 @@ public:
     void simulate_disconnection(const std::string& id) {
         if (disconnection_callback) {
             disconnection_callback(id);
+        }
+    }
+
+    void simulate_video_reset() {
+        if (video_reset_callback) {
+            video_reset_callback();
         }
     }
 };
