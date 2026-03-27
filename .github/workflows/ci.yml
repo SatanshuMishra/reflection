@@ -141,9 +141,23 @@ jobs:
           install_msi "$RUNTIME"
           install_msi "$DEVEL"
 
+          # msiexec /a creates a nested directory: TARGETDIR/gstreamer/1.0/...
+          # instead of TARGETDIR/1.0/... — flatten it if detected.
+          if [ -d "D:/gstreamer/gstreamer/1.0" ] && [ ! -d "D:/gstreamer/1.0" ]; then
+            echo "Detected nested D:/gstreamer/gstreamer layout; flattening..."
+            shopt -s dotglob
+            mv "D:/gstreamer/gstreamer/"* "D:/gstreamer/"
+            rmdir "D:/gstreamer/gstreamer" 2>/dev/null || true
+          fi
+
+          # Diagnostics: show what was extracted
+          echo "GStreamer layout under D:/gstreamer:"
+          find "D:/gstreamer" -maxdepth 4 -type d 2>/dev/null | head -30
+
           if [ ! -f "D:/gstreamer/1.0/msvc_x86_64/bin/gstreamer-1.0-0.dll" ]; then
             echo "ERROR[postinstall-verify]: gstreamer-1.0-0.dll missing"
-            ls -la D:/gstreamer/ 2>/dev/null || true
+            echo "Searching for DLL anywhere under D:/gstreamer:"
+            find "D:/gstreamer" -name "gstreamer-1.0-0.dll" -maxdepth 8 2>/dev/null || true
             exit 16
           fi
           echo "GStreamer ${GSTREAMER_VERSION} installed and verified"
