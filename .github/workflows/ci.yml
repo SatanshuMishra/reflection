@@ -210,22 +210,8 @@ jobs:
           $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
           cmake --build build --config Release
 
-      - name: Run deterministic tests
+      - name: Run tests
         shell: pwsh
         run: |
           $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
-          ctest --test-dir build -C Release --output-on-failure -E "^FrameStaleMonitorTest\.BecomesStaleWhenFramesStop$"
-
-      - name: Run flaky timing test (retry once)
-        shell: pwsh
-        run: |
-          $env:PATH = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin;$env:PATH"
-          $pattern = "^FrameStaleMonitorTest\.BecomesStaleWhenFramesStop$"
-          ctest --test-dir build -C Release --output-on-failure -R $pattern
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Flaky timing test failed on first attempt; retrying once..."
-            ctest --test-dir build -C Release --output-on-failure -R $pattern
-            if ($LASTEXITCODE -ne 0) {
-              throw "Flaky timing test failed on both attempts"
-            }
-          }
+          ctest --test-dir build -C Release --output-on-failure

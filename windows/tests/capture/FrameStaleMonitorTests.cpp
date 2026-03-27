@@ -5,26 +5,14 @@
 
 #include "session/FrameStaleMonitor.h"
 
-#include <atomic>
 #include <chrono>
-#include <functional>
-#include <thread>
+#include <condition_variable>
+#include <mutex>
+#include <vector>
+
+using namespace std::chrono_literals;
 
 namespace reflection::testing {
-namespace {
-
-bool wait_until(const std::function<bool()>& predicate, std::chrono::milliseconds timeout) {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (predicate()) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return predicate();
-}
-
-} // namespace
 
 TEST(FrameStaleMonitorTest, InitiallyNotReceiving) {
     FrameStaleMonitor monitor;
@@ -32,62 +20,90 @@ TEST(FrameStaleMonitorTest, InitiallyNotReceiving) {
 }
 
 TEST(FrameStaleMonitorTest, RecordFrameThenBecomesReceiving) {
-    // Use short intervals for fast tests
     FrameStaleMonitor monitor(0.2, 50); // 200ms threshold, 50ms check
 
-    std::atomic<bool> status_received{false};
-    std::atomic<bool> last_status{false};
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<bool> status_history;
 
     monitor.start_monitoring([&](bool receiving) {
-        last_status.store(receiving);
-        status_received.store(true);
+        {
+            std::lock_guard lock(mtx);
+            status_history.push_back(receiving);
+        }
+        cv.notify_all();
     });
 
-    // Record a frame
     monitor.record_frame();
 
-    // Wait up to 2 seconds for the monitor callback.
-    EXPECT_TRUE(wait_until([&] { return status_received.load(); }, std::chrono::milliseconds(2000)));
-    EXPECT_TRUE(last_status.load());
+    // Wait for "receiving = true" callback
+    {
+        std::unique_lock lock(mtx);
+        ASSERT_TRUE(cv.wait_for(lock, 5s,
+            [&] { return !status_history.empty() && status_history.back(); }));
+    }
+
     EXPECT_TRUE(monitor.is_receiving_frames());
 }
 
 TEST(FrameStaleMonitorTest, BecomesStaleWhenFramesStop) {
     FrameStaleMonitor monitor(0.1, 50); // 100ms threshold, 50ms check
 
-    std::atomic<int> status_count{0};
-    std::atomic<bool> last_status{false};
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<bool> status_history;
 
     monitor.start_monitoring([&](bool receiving) {
-        last_status.store(receiving);
-        status_count.fetch_add(1);
+        {
+            std::lock_guard lock(mtx);
+            status_history.push_back(receiving);
+        }
+        cv.notify_all();
     });
 
     // Record a frame so it becomes "receiving"
     monitor.record_frame();
 
-    // Wait for receiving status (generous timeout for slow CI runners).
-    EXPECT_TRUE(wait_until([&] { return status_count.load() >= 1; }, std::chrono::milliseconds(2500)));
-    EXPECT_TRUE(last_status.load());
+    // Wait for "receiving = true" transition
+    {
+        std::unique_lock lock(mtx);
+        ASSERT_TRUE(cv.wait_for(lock, 5s,
+            [&] { return !status_history.empty() && status_history.back(); }));
+    }
 
-    // Now stop recording frames and wait for stale detection.
-    EXPECT_TRUE(wait_until([&] { return status_count.load() >= 2; }, std::chrono::milliseconds(4500)));
+    // Stop recording frames — monitor should detect stale
+    // Wait for "receiving = false" transition
+    {
+        std::unique_lock lock(mtx);
+        ASSERT_TRUE(cv.wait_for(lock, 5s,
+            [&] { return status_history.size() >= 2 && !status_history.back(); }));
+    }
 
-    EXPECT_FALSE(last_status.load());
     EXPECT_FALSE(monitor.is_receiving_frames());
 }
 
 TEST(FrameStaleMonitorTest, StopMonitoringResetsState) {
     FrameStaleMonitor monitor(0.2, 50);
 
-    std::atomic<bool> called{false};
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool received_first = false;
 
     monitor.start_monitoring([&](bool receiving) {
-        if (!receiving) called.store(true);
+        if (receiving) {
+            std::lock_guard lock(mtx);
+            received_first = true;
+            cv.notify_all();
+        }
     });
 
     monitor.record_frame();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Wait for first callback
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, 5s, [&] { return received_first; });
+    }
 
     monitor.stop_monitoring();
 
@@ -99,15 +115,24 @@ TEST(FrameStaleMonitorTest, RestartsCleanly) {
 
     // Start and stop twice
     for (int round = 0; round < 2; ++round) {
-        std::atomic<bool> received_status{false};
+        std::mutex mtx;
+        std::condition_variable cv;
+        bool received_status = false;
 
         monitor.start_monitoring([&](bool /*receiving*/) {
-            received_status.store(true);
+            std::lock_guard lock(mtx);
+            received_status = true;
+            cv.notify_all();
         });
 
         monitor.record_frame();
 
-        EXPECT_TRUE(wait_until([&] { return received_status.load(); }, std::chrono::milliseconds(2000)));
+        {
+            std::unique_lock lock(mtx);
+            ASSERT_TRUE(cv.wait_for(lock, 5s, [&] { return received_status; }))
+                << "Round " << round << " failed to receive status callback";
+        }
+
         monitor.stop_monitoring();
     }
 }

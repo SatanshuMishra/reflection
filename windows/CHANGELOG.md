@@ -8,6 +8,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **Black screen on first iPad connection** — The first AirPlay connection after app launch showed a black mirror window. Root cause: two race conditions where (1) the first H.264 keyframe arrived before the pipeline was created, and (2) the video sink's swap chain was initialized with a null window handle. Fix: pre-allocate the GStreamer pipeline before mDNS advertisement so frames buffer immediately, and create the window before starting the pipeline so the swap chain targets a valid HWND.
 - **Corrupted video after iPad lock/unlock** — Stream discontinuity (iPad lock then unlock) caused color artifacts because stale reference frames remained in the H.264 decoder. Added video reset callback that flushes the decoder's picture buffer on stream restart.
+- **WinSparkle auto-update never initialized** — Inverted return value check (`!= 0` instead of `== 0`) caused `win_sparkle_init()` to never be called. Auto-update was completely non-functional.
+- **Flaky CI test** — `BecomesStaleWhenFramesStop` used polling loops sensitive to CI runner timer resolution. Replaced with `std::condition_variable` for deterministic async waiting.
 
 ### Added
 - **Custom borderless mirror window** — Replaced the basic Win32 window with a borderless popup featuring resize handles, aspect ratio lock, and fullscreen mode (F11/Escape).
