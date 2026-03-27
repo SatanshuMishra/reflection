@@ -38,3 +38,4 @@ windows/installer/Output/
 # Debugging and RCA artifacts (do not commit)
 reports/
 windows_release_failed_runs.csv
+windows/Reflection-*.zip

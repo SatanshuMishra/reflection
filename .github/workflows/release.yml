@@ -292,67 +292,19 @@ jobs:
           }
 
       - name: Bundle GStreamer runtime
+        # Safety net: CMake post-build already runs this script, but MSBuild
+        # may silently swallow non-zero exits from PowerShell post-build
+        # commands. This explicit step guarantees a hard CI failure if any
+        # required DLL or plugin is missing.
         shell: pwsh
         run: |
-          $gstBin = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\bin"
-          $gstPlugins = "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64\lib\gstreamer-1.0"
-          $buildDir = "build\Release"
-          if (-not (Test-Path $buildDir)) {
-            Write-Error "Required build output directory missing: $buildDir"
-            exit 1
-          }
-          if (-not (Test-Path "$buildDir\Reflection.exe")) {
-            Write-Error "Required executable missing: $buildDir\Reflection.exe"
-            exit 1
-          }
-
-          # Core GStreamer DLLs needed at runtime
-          $dlls = @(
-            "gstreamer-1.0-0.dll", "gstapp-1.0-0.dll", "gstvideo-1.0-0.dll",
-            "gstbase-1.0-0.dll", "gstcodecparsers-1.0-0.dll", "gstpbutils-1.0-0.dll",
-            "gstaudio-1.0-0.dll", "gsttag-1.0-0.dll",
-            "glib-2.0-0.dll", "gobject-2.0-0.dll", "gmodule-2.0-0.dll",
-            "intl-8.dll", "ffi-8.dll", "pcre2-8-0.dll", "orc-0.4-0.dll",
-            "z1.dll", "gio-2.0-0.dll"
-          )
-          $missingDlls = @()
-          foreach ($dll in $dlls) {
-            $src = Join-Path $gstBin $dll
-            if (Test-Path $src) {
-              Copy-Item $src "$buildDir\" -Force
-              Write-Host "Copied: $dll"
-            } else {
-              $missingDlls += $dll
-            }
-          }
-          if ($missingDlls.Count -gt 0) {
-            Write-Error "Missing required GStreamer runtime DLLs: $($missingDlls -join ', ')"
-            exit 1
-          }
-
-          # GStreamer plugin DLLs
-          $plugins = @(
-            "gstcoreelements.dll", "gstapp.dll", "gstvideoparsersbad.dll",
-            "gstd3d11.dll", "gstlibav.dll", "gstvideoconvertscale.dll",
-            "gstaudioconvert.dll", "gstaudioresample.dll", "gstaudioparsers.dll",
-            "gstwasapi.dll", "gstautodetect.dll"
-          )
-          $pluginDir = "$buildDir\plugins"
-          New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null
-          $missingPlugins = @()
-          foreach ($plugin in $plugins) {
-            $src = Join-Path $gstPlugins $plugin
-            if (Test-Path $src) {
-              Copy-Item $src "$pluginDir\" -Force
-              Write-Host "Copied plugin: $plugin"
-            } else {
-              $missingPlugins += $plugin
-            }
-          }
-          if ($missingPlugins.Count -gt 0) {
-            Write-Error "Missing required GStreamer plugins: $($missingPlugins -join ', ')"
-            exit 1
-          }
+          $gstRoot = $env:GSTREAMER_1_0_ROOT_MSVC_X86_64
+          .\scripts\bundle-gstreamer.ps1 `
+            -ExePath "build\Release\Reflection.exe" `
+            -SearchDirs "$gstRoot\bin" `
+            -OutputDir "build\Release" `
+            -PluginSrcDir "$gstRoot\lib\gstreamer-1.0" `
+            -PluginOutputDir "build\Release\plugins"
 
       - name: Extract version from tag
         id: version

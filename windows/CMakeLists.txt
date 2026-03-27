@@ -349,115 +349,43 @@ add_custom_command(TARGET Reflection POST_BUILD
 )
 
 # --------------------------------------------------------------------------
-# Copy MSYS2 GStreamer runtime DLLs next to the executable.
-# MSVC links against MSYS2 .dll.a import libraries at build time, but
-# at runtime the actual .dll files must be discoverable. The industry
-# standard approach is to co-locate them with the executable.
+# Bundle GStreamer runtime DLLs next to the executable.
+# Uses automatic PE import-table walking (dumpbin/objdump) to discover all
+# transitive DLL dependencies instead of hardcoded lists. This prevents
+# breakage when GStreamer versions change DLL names (e.g., ffi-7 vs ffi-8).
 # --------------------------------------------------------------------------
-if(USE_UXPLAY AND GST_LIBRARY_DIRS MATCHES "msys64")
-    # Derive the MSYS2 bin directory from the lib directory
-    string(REPLACE "/lib" "/bin" _MSYS2_BIN_DIR "${GST_LIBRARY_DIRS}")
-    # Also handle backslash paths
-    string(REPLACE "\\lib" "\\bin" _MSYS2_BIN_DIR "${_MSYS2_BIN_DIR}")
+if(USE_UXPLAY)
+    # Determine GStreamer bin/ and plugin/ directories for both MSYS2 and MSVC
+    if(GST_LIBRARY_DIRS MATCHES "msys64")
+        # GST_LIBRARY_DIRS from pkg_check_modules may be a CMake list —
+        # extract only the first element for path derivation.
+        list(GET GST_LIBRARY_DIRS 0 _GST_LIB_DIR_FIRST)
+        string(REPLACE "/lib" "/bin" _GST_BIN_DIR "${_GST_LIB_DIR_FIRST}")
+        string(REPLACE "\\lib" "\\bin" _GST_BIN_DIR "${_GST_BIN_DIR}")
+        string(REGEX REPLACE "[/\\\\]bin$" "" _GST_PREFIX "${_GST_BIN_DIR}")
+        set(_GST_PLUGIN_DIR "${_GST_PREFIX}/lib/gstreamer-1.0")
+    elseif(DEFINED ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64})
+        set(_GST_BIN_DIR "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/bin")
+        set(_GST_PLUGIN_DIR "$ENV{GSTREAMER_1_0_ROOT_MSVC_X86_64}/lib/gstreamer-1.0")
+    else()
+        message(WARNING "GStreamer bin directory not found — DLLs will not be bundled")
+    endif()
 
-    # Complete dependency tree for our GStreamer usage (recursive objdump scan
-    # PLUS runtime-loaded deps via LoadLibrary).
-    # ALL MSYS2 DLLs must be co-located with the exe to prevent PATH pollution
-    # from Git for Windows (C:\Program Files\Git\mingw64\bin) which ships
-    # incompatible mingw64 versions of the same DLLs.
-    #
-    # Import-table deps: gstreamer, gstapp, gstvideo, gstbase, glib, gobject,
-    #   gmodule, intl, iconv, winpthread, gcc_s_seh, pcre2, ffi, orc
-    # Plugin transitive deps (loaded when GStreamer scans plugin DLLs):
-    #   libgstcodecparsers (h264parse), libgstpbutils (codec detection),
-    #   libgstaudio (audio plugins), libgsttag (metadata)
-    # Runtime-loaded (via libintl gettext IDN support):
-    #   libidn2-0, libunistring-5
-    set(_MSYS2_DLLS
-        libgstreamer-1.0-0.dll
-        libgstapp-1.0-0.dll
-        libgstvideo-1.0-0.dll
-        libgstbase-1.0-0.dll
-        libgstcodecparsers-1.0-0.dll
-        libgstpbutils-1.0-0.dll
-        libgstaudio-1.0-0.dll
-        libgsttag-1.0-0.dll
-        libglib-2.0-0.dll
-        libgobject-2.0-0.dll
-        libgmodule-2.0-0.dll
-        libintl-8.dll
-        libiconv-2.dll
-        libidn2-0.dll
-        libunistring-5.dll
-        libwinpthread-1.dll
-        libgcc_s_seh-1.dll
-        libpcre2-8-0.dll
-        libffi-8.dll
-        liborc-0.4-0.dll
-    )
-
-    foreach(_dll ${_MSYS2_DLLS})
-        set(_dll_path "${_MSYS2_BIN_DIR}/${_dll}")
-        if(EXISTS "${_dll_path}")
-            add_custom_command(TARGET Reflection POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_dll_path}"
-                    "$<TARGET_FILE_DIR:Reflection>/${_dll}"
-            )
-        else()
-            message(WARNING "MSYS2 DLL not found: ${_dll_path}")
-        endif()
-    endforeach()
-
-    message(STATUS "MSYS2 GStreamer DLLs will be copied to build output (${_MSYS2_BIN_DIR})")
-
-    # ------------------------------------------------------------------
-    # GStreamer PLUGIN DLLs -- loaded dynamically by gst_init().
-    # These provide the actual codec/element implementations (h264parse,
-    # d3d11h264dec, etc.). Without them the app cannot decode or render.
-    # Plugins go in a plugins/ subdirectory next to the executable so
-    # configure_gstreamer_environment() can set GST_PLUGIN_PATH to it.
-    # ------------------------------------------------------------------
-    # Derive plugin directory from the library directory (not bin — avoids double-replace)
-    string(REGEX REPLACE "[/\\\\]bin[/\\\\]?\\.\\.[/\\\\]bin$" "" _MSYS2_PREFIX "${_MSYS2_BIN_DIR}")
-    string(REGEX REPLACE "[/\\\\]bin$" "" _MSYS2_PREFIX "${_MSYS2_PREFIX}")
-    set(_GST_PLUGIN_SRC_DIR "${_MSYS2_PREFIX}/lib/gstreamer-1.0")
-
-    set(_GST_PLUGINS
-        libgstcoreelements.dll      # queue, tee, fakesink (GStreamer core)
-        libgstapp.dll               # appsrc
-        libgstvideoparsersbad.dll   # h264parse
-        libgstd3d11.dll             # d3d11h264dec, d3d11videosink
-        libgstlibav.dll             # avdec_h264, avdec_aac (FFmpeg decoders)
-        libgstvideoconvertscale.dll # videoconvert, videoscale
-        libgstaudioconvert.dll      # audioconvert
-        libgstaudioresample.dll     # audioresample
-        libgstaudioparsers.dll      # aacparse
-        libgstwasapi.dll            # wasapisink (Windows audio output)
-        libgstautodetect.dll        # autoaudiosink fallback
-    )
-
-    # Create plugins/ directory
-    add_custom_command(TARGET Reflection POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:Reflection>/plugins"
-        COMMENT "Creating GStreamer plugins directory"
-    )
-
-    foreach(_plugin ${_GST_PLUGINS})
-        set(_plugin_path "${_GST_PLUGIN_SRC_DIR}/${_plugin}")
-        if(EXISTS "${_plugin_path}")
-            add_custom_command(TARGET Reflection POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_plugin_path}"
-                    "$<TARGET_FILE_DIR:Reflection>/plugins/${_plugin}"
-            )
-        else()
-            message(WARNING "GStreamer plugin not found: ${_plugin_path}")
-        endif()
-    endforeach()
-
-    message(STATUS "GStreamer plugins will be copied from: ${_GST_PLUGIN_SRC_DIR}")
+    if(DEFINED _GST_BIN_DIR)
+        # Post-build: auto-discover and copy GStreamer DLLs + plugins
+        add_custom_command(TARGET Reflection POST_BUILD
+            COMMAND powershell -ExecutionPolicy Bypass -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-gstreamer.ps1"
+                -ExePath "$<TARGET_FILE:Reflection>"
+                -SearchDirs \"${_GST_BIN_DIR}\"
+                -OutputDir "$<TARGET_FILE_DIR:Reflection>"
+                -PluginSrcDir \"${_GST_PLUGIN_DIR}\"
+                -PluginOutputDir "$<TARGET_FILE_DIR:Reflection>/plugins"
+            COMMENT "Bundling GStreamer runtime DLLs (auto-discovered via import table)"
+        )
+        message(STATUS "GStreamer DLLs will be auto-bundled from: ${_GST_BIN_DIR}")
+        message(STATUS "GStreamer plugins from: ${_GST_PLUGIN_DIR}")
+    endif()
 endif()
 
 # --------------------------------------------------------------------------
