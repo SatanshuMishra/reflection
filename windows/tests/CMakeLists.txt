@@ -73,7 +73,6 @@ target_sources(ReflectionTests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/capture/CaptureError.cpp
     ${CMAKE_SOURCE_DIR}/src/settings/AppSettings.cpp
     ${CMAKE_SOURCE_DIR}/src/utilities/Logger.cpp
-    ${CMAKE_SOURCE_DIR}/src/utilities/SessionDetector.cpp
     ${CMAKE_SOURCE_DIR}/src/utilities/UpdateChecker.cpp
 
     # Milestone 2 sources — pure C++ logic (no RPiPlay C headers)

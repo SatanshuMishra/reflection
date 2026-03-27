@@ -40,7 +40,11 @@ void stub_video_pause(void*) {}
 void stub_video_resume(void*) {}
 void stub_conn_feedback(void*) {}
 void stub_conn_reset(void*, int) {}
-void stub_video_reset(void*, reset_type_t) {}
+void on_video_reset_handler(void* cls, reset_type_t type) {
+    // Forward to UxPlayCore's public handler method
+    auto* self = static_cast<reflection::UxPlayCore*>(cls);
+    self->handle_video_reset(static_cast<int>(type));
+}
 double stub_audio_set_client_volume(void*) { return -30.0; }
 void stub_audio_flush(void*) {}
 void stub_video_flush(void*) {}
@@ -85,7 +89,7 @@ bool UxPlayCore::init(const AirPlayCoreConfig& config) {
     // Video control (called without NULL checks during stream setup)
     cbs.video_pause = &stub_video_pause;
     cbs.video_resume = &stub_video_resume;
-    cbs.video_reset = &stub_video_reset;
+    cbs.video_reset = &on_video_reset_handler;
     cbs.video_flush = &stub_video_flush;
     cbs.video_report_size = reinterpret_cast<decltype(cbs.video_report_size)>(&on_video_report_size);
     cbs.video_set_codec = reinterpret_cast<decltype(cbs.video_set_codec)>(&on_video_set_codec);
@@ -219,6 +223,22 @@ bool UxPlayCore::is_running() const {
 void UxPlayCore::set_video_callback(VideoFrameCallback callback) {
     std::lock_guard lock(callback_mutex_);
     video_callback_ = std::move(callback);
+}
+
+void UxPlayCore::set_video_reset_callback(VideoResetCallback callback) {
+    std::lock_guard lock(callback_mutex_);
+    video_reset_callback_ = std::move(callback);
+}
+
+void UxPlayCore::handle_video_reset(int reset_type) {
+    Logger::info("UxPlay video_reset (type={})", reset_type);
+
+    VideoResetCallback cb;
+    {
+        std::lock_guard lock(callback_mutex_);
+        cb = video_reset_callback_;
+    }
+    if (cb) cb();
 }
 
 void UxPlayCore::set_audio_callback(AudioFrameCallback callback) {

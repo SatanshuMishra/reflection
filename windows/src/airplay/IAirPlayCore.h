@@ -16,6 +16,7 @@ namespace reflection {
 class IAirPlayCore {
 public:
     using VideoFrameCallback = std::function<void(const AirPlayVideoFrame&)>;
+    using VideoResetCallback = std::function<void()>;
     using AudioFrameCallback = std::function<void(const AirPlayAudioFrame&)>;
     using ConnectionCallback = std::function<void(const AirPlayConnectionEvent&)>;
     using DisconnectionCallback = std::function<void(const std::string& device_id)>;
@@ -36,6 +37,10 @@ public:
 
     /// Set callback for received video frames.
     virtual void set_video_callback(VideoFrameCallback callback) = 0;
+
+    /// Set callback for video stream reset (iPad lock/unlock, stream restart).
+    /// The pipeline should flush its decoder state when this fires.
+    virtual void set_video_reset_callback(VideoResetCallback callback) = 0;
 
     /// Set callback for received audio frames.
     virtual void set_audio_callback(AudioFrameCallback callback) = 0;

@@ -44,6 +44,7 @@ public:
     [[nodiscard]] bool is_running() const override;
 
     void set_video_callback(VideoFrameCallback callback) override;
+    void set_video_reset_callback(VideoResetCallback /*callback*/) override {}
     void set_audio_callback(AudioFrameCallback callback) override;
     void set_connection_callback(ConnectionCallback callback) override;
     void set_disconnection_callback(DisconnectionCallback callback) override;

@@ -48,6 +48,8 @@ public:
     [[nodiscard]] bool is_running() const override;
 
     void set_video_callback(VideoFrameCallback callback) override;
+    void set_video_reset_callback(VideoResetCallback callback) override;
+    void handle_video_reset(int reset_type);
     void set_audio_callback(AudioFrameCallback callback) override;
     void set_connection_callback(ConnectionCallback callback) override;
     void set_disconnection_callback(DisconnectionCallback callback) override;
@@ -60,6 +62,7 @@ private:
 
     mutable std::mutex callback_mutex_;
     VideoFrameCallback video_callback_;
+    VideoResetCallback video_reset_callback_;
     AudioFrameCallback audio_callback_;
     ConnectionCallback connection_callback_;
     DisconnectionCallback disconnection_callback_;
