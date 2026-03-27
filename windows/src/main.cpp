@@ -255,9 +255,10 @@ struct WinSparkleGuard {
         win_sparkle_set_appcast_url(
             std::string(reflection::constants::kAppcastUrl).c_str());
 
-        // Ed25519 public key for signature verification
+        // Ed25519 public key for signature verification.
+        // win_sparkle_set_eddsa_public_key returns 1 on success, 0 on failure.
         if (win_sparkle_set_eddsa_public_key(
-                std::string(reflection::constants::kEdDsaPublicKey).c_str()) != 0) {
+                std::string(reflection::constants::kEdDsaPublicKey).c_str()) == 0) {
             reflection::Logger::error("WinSparkle: failed to set Ed25519 public key");
             return;
         }
