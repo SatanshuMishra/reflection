@@ -21,6 +21,7 @@ public:
     [[nodiscard]] bool minimize_to_tray() const;
     [[nodiscard]] std::string theme() const;
     [[nodiscard]] bool firewall_configured() const;
+    [[nodiscard]] bool auto_update_enabled() const;
 
     // Setters (persist to registry immediately)
     void set_server_name(const std::wstring& name);
@@ -28,6 +29,7 @@ public:
     void set_minimize_to_tray(bool enabled);
     void set_theme(const std::string& theme);
     void set_firewall_configured(bool configured);
+    void set_auto_update_enabled(bool enabled);
 
 private:
     // Registry helpers

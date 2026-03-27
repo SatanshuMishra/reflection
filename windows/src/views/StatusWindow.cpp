@@ -11,6 +11,8 @@
 #include "utilities/NameGenerator.h"
 #include "utilities/WinUtils.h"
 
+#include <winsparkle/winsparkle.h>
+
 #include <dwmapi.h>
 #include <shellapi.h>
 
@@ -176,6 +178,7 @@ bool StatusWindow::create(HINSTANCE instance, AppSettings& settings,
             ",\"theme\":\"" + json_escape(settings_->theme()) + "\""
             ",\"runInBackground\":" + (run_in_bg ? "true" : "false") +
             ",\"launchAtLogin\":" + (launch_login ? "true" : "false") +
+            ",\"autoUpdateEnabled\":" + (settings_->auto_update_enabled() ? "true" : "false") +
             "}";
         webview_->post_message(make_json_w(settings_json));
 
@@ -360,6 +363,11 @@ void StatusWindow::on_message_from_webview(const std::wstring& json_w) {
             auto_start.disable();
         }
         Logger::info("Launch at login: {}", enabled ? "on" : "off");
+    } else if (type == "setAutoUpdate") {
+        bool enabled = json_get_bool(json, "enabled");
+        settings_->set_auto_update_enabled(enabled);
+        win_sparkle_set_automatic_check_for_updates(enabled ? 1 : 0);
+        Logger::info("Auto-update: {}", enabled ? "on" : "off");
     } else if (type == "disconnect") {
         // Forward disconnect request to the main app
         if (message_hwnd_) {

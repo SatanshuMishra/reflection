@@ -61,6 +61,14 @@ void AppSettings::set_firewall_configured(bool configured) {
     write_bool(L"FirewallConfigured", configured);
 }
 
+bool AppSettings::auto_update_enabled() const {
+    return read_bool(constants::kRegKeyAutoUpdateEnabled.data(), true);
+}
+
+void AppSettings::set_auto_update_enabled(bool enabled) {
+    write_bool(constants::kRegKeyAutoUpdateEnabled.data(), enabled);
+}
+
 // -- Registry helpers --
 
 std::wstring AppSettings::read_string(

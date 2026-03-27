@@ -24,7 +24,10 @@
 #pragma comment(lib, "mfuuid.lib")
 #endif
 
+#include <winsparkle/winsparkle.h>
+
 #include "app/App.h"
+#include "settings/AppSettings.h"
 #include "utilities/Constants.h"
 #include "utilities/Logger.h"
 #include "utilities/WinUtils.h"
@@ -208,6 +211,69 @@ struct MFGuard {
     MFGuard& operator=(const MFGuard&) = delete;
 };
 #endif
+
+/// RAII wrapper for WinSparkle auto-update initialization.
+/// Configures appcast URL, Ed25519 public key, and check interval
+/// from constants. Reads auto-update preference from AppSettings.
+struct WinSparkleGuard {
+    bool initialized = false;
+
+    explicit WinSparkleGuard(const reflection::AppSettings& settings) {
+        // All configuration must happen BEFORE win_sparkle_init()
+
+        // App identity (overrides VERSIONINFO resource)
+        const auto version_w = reflection::win_utils::utf8_to_wide(REFLECTION_VERSION);
+        win_sparkle_set_app_details(L"Satanshu Mishra", L"Reflection",
+                                    version_w.c_str());
+
+        // Appcast URL (HTTPS, hosted on GitHub Pages)
+        win_sparkle_set_appcast_url(
+            std::string(reflection::constants::kAppcastUrl).c_str());
+
+        // Ed25519 public key for signature verification
+        if (win_sparkle_set_eddsa_public_key(
+                std::string(reflection::constants::kEdDsaPublicKey).c_str()) != 0) {
+            reflection::Logger::error("WinSparkle: failed to set Ed25519 public key");
+            return;
+        }
+
+        // Store WinSparkle preferences under our instance-specific registry path
+        // (e.g., Software\Reflection\WinSparkle or Software\Reflection-Dev\WinSparkle)
+        const std::string reg_path =
+            reflection::win_utils::wide_to_utf8(
+                std::wstring(reflection::constants::kRegistryRoot))
+            + "\\WinSparkle";
+        win_sparkle_set_registry_path(reg_path.c_str());
+
+        // Auto-check preference from user settings (default: on)
+        win_sparkle_set_automatic_check_for_updates(
+            settings.auto_update_enabled() ? 1 : 0);
+        win_sparkle_set_update_check_interval(
+            reflection::constants::kUpdateCheckIntervalSec);
+
+        // Shutdown callback — WinSparkle calls this when an update needs to install
+        win_sparkle_set_shutdown_request_callback([]() {
+            PostQuitMessage(0);
+        });
+        win_sparkle_set_can_shutdown_callback([]() -> int {
+            return 1;  // Always allow shutdown for updates
+        });
+
+        win_sparkle_init();
+        initialized = true;
+        reflection::Logger::info("WinSparkle initialized (auto-check: {})",
+                                  settings.auto_update_enabled() ? "on" : "off");
+    }
+
+    ~WinSparkleGuard() {
+        if (initialized) {
+            win_sparkle_cleanup();
+        }
+    }
+
+    WinSparkleGuard(const WinSparkleGuard&) = delete;
+    WinSparkleGuard& operator=(const WinSparkleGuard&) = delete;
+};
 
 /// SEH crash handler — writes crash address to debugger output.
 /// Uses OutputDebugStringA directly to avoid deadlock risk if the crash
@@ -493,6 +559,10 @@ int WINAPI wWinMain(
         reflection::Logger::error("Failed to initialize application");
         return 1;
     }
+
+    // Auto-update: initialize after app (settings must be available).
+    // RAII cleanup happens before app destructor (reverse init order).
+    const WinSparkleGuard winsparkle(app.settings());
 
     const int exit_code = app.run();
 

@@ -3,6 +3,17 @@
 All notable changes to the Windows version of Reflection are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.7.0] - 2026-03-26
+
+### Added
+- **Automatic updates via WinSparkle** — The app checks for new versions every 24 hours via a signed appcast feed on GitHub Pages. When an update is available, a native dialog shows release notes and offers one-click install. Updates are verified with Ed25519 signatures before installation.
+- **"Check for Updates..." menu item** — Added to the system tray context menu for manual update checks.
+- **"Automatic Updates" settings toggle** — New toggle in Settings to enable/disable automatic update checking (default: on).
+- `scripts/generate-appcast.ps1` — CI script that signs the installer with Ed25519 and generates the WinSparkle appcast XML.
+
+### Changed
+- Release workflow now signs installers with Ed25519 and deploys appcast.xml to GitHub Pages for auto-update discovery.
+
 ## [1.6.3] - 2026-03-26
 
 ### Fixed

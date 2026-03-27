@@ -144,6 +144,23 @@ constexpr std::string_view kGitHubApiUrl =
 constexpr std::wstring_view kLastSeenVersionKey = L"LastSeenVersion";
 
 // --------------------------------------------------------------------------
+// Auto-Update (WinSparkle)
+// --------------------------------------------------------------------------
+constexpr std::string_view kAppcastUrl =
+    "https://satanshumishra.github.io/reflection/appcast.xml";
+
+// Ed25519 public key for update signature verification (base64).
+// Generated with: winsparkle-tool generate-key
+// Private key stored as GitHub Actions secret WINSPARKLE_EDDSA_PRIVATE_KEY.
+constexpr std::string_view kEdDsaPublicKey =
+    "gOGNoc7imBogO/zxFakOlD2nfgBkeW7TB/bl8tvQUDo=";
+
+constexpr std::wstring_view kRegKeyAutoUpdateEnabled = L"AutoUpdateEnabled";
+
+// Check for updates every 24 hours (86400 seconds)
+constexpr int kUpdateCheckIntervalSec = 86400;
+
+// --------------------------------------------------------------------------
 // Logging
 // --------------------------------------------------------------------------
 constexpr std::wstring_view kLogFileName = L"reflection.log";

@@ -22,6 +22,8 @@
 #include "utilities/SessionDetector.h"
 #include "utilities/WinUtils.h"
 
+#include <winsparkle/winsparkle.h>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -40,6 +42,10 @@ namespace reflection {
 App::App(HINSTANCE instance)
     : instance_(instance)
 {
+}
+
+const AppSettings& App::settings() const {
+    return *settings_;
 }
 
 App::~App() {
@@ -214,6 +220,11 @@ void App::on_tray_menu(int menu_item_id) {
             if (status_window_) {
                 status_window_->show();
             }
+            break;
+
+        case SystemTray::kMenuCheckUpdates:
+            Logger::info("Check for updates requested from tray menu");
+            win_sparkle_check_update_with_ui();
             break;
 
         default:

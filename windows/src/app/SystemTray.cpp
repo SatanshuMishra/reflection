@@ -109,6 +109,8 @@ void SystemTray::show_context_menu(HWND hwnd) {
     AppendMenu(menu, MF_STRING, kMenuSettings, L"Settings...");
     AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(menu, MF_STRING, kMenuShowWindow, L"Show Reflection");
+    AppendMenu(menu, MF_STRING, kMenuCheckUpdates, L"Check for Updates...");
+    AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenu(menu, MF_STRING, kMenuQuit, L"Quit");
 
     // Required: set foreground so menu dismisses on click-away

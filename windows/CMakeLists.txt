@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(Reflection
-    VERSION 1.6.3
+    VERSION 1.7.0
     DESCRIPTION "AirPlay iPad screen mirroring for Windows"
     LANGUAGES C CXX
 )
@@ -67,6 +67,24 @@ endif()
 
 message(STATUS "WebView2 SDK: ${WEBVIEW2_INCLUDE_DIR}")
 message(STATUS "WebView2 lib: ${WEBVIEW2_LIB_DIR}")
+
+# --------------------------------------------------------------------------
+# WinSparkle — auto-update library (Ed25519 signed appcast + native UI)
+# Installed via vcpkg. Ships as a single DLL with zero dependencies.
+# --------------------------------------------------------------------------
+find_library(WINSPARKLE_LIBRARY NAMES WinSparkle REQUIRED)
+find_path(WINSPARKLE_INCLUDE_DIR NAMES winsparkle/winsparkle.h REQUIRED)
+# WinSparkle DLL path — vcpkg manifest mode places installed files
+# under build/vcpkg_installed/<triplet>/bin/
+get_filename_component(_WINSPARKLE_LIB_DIR "${WINSPARKLE_LIBRARY}" DIRECTORY)
+get_filename_component(_WINSPARKLE_PREFIX "${_WINSPARKLE_LIB_DIR}" DIRECTORY)
+find_file(WINSPARKLE_DLL NAMES WinSparkle.dll
+    PATHS "${_WINSPARKLE_PREFIX}/bin"
+          "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    REQUIRED
+)
+message(STATUS "WinSparkle: ${WINSPARKLE_LIBRARY}")
+message(STATUS "WinSparkle DLL: ${WINSPARKLE_DLL}")
 
 # libplist — required by RPiPlay for AirPlay RTSP plist parsing
 find_path(PLIST_INCLUDE_DIR NAMES plist/plist.h)
@@ -207,6 +225,7 @@ add_executable(Reflection WIN32 ${REFLECTION_SOURCES} ${REFLECTION_RC})
 target_include_directories(Reflection PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${WEBVIEW2_INCLUDE_DIR}
+    ${WINSPARKLE_INCLUDE_DIR}
 )
 
 # GStreamer include directories
@@ -250,6 +269,9 @@ target_link_libraries(Reflection PRIVATE
 
     # WebView2 (static loader — no DLL dependency)
     ${WEBVIEW2_LIB_DIR}/WebView2LoaderStatic.lib
+
+    # WinSparkle (auto-update)
+    ${WINSPARKLE_LIBRARY}
 
     # Windows system libraries (always needed)
     ws2_32
@@ -334,6 +356,11 @@ if(USE_UXPLAY)
     target_compile_definitions(Reflection PRIVATE USE_UXPLAY=1)
 endif()
 
+# Version string available at compile time (for WinSparkle app details)
+target_compile_definitions(Reflection PRIVATE
+    REFLECTION_VERSION="${CMAKE_PROJECT_VERSION}"
+)
+
 # Application manifest for DPI awareness and UTF-8
 set_target_properties(Reflection PROPERTIES
     VS_DPI_AWARE "PerMonitor"
@@ -346,6 +373,14 @@ add_custom_command(TARGET Reflection POST_BUILD
         "${UI_ASSETS_SRC}"
         "$<TARGET_FILE_DIR:Reflection>/assets"
     COMMENT "Copying UI assets to build output"
+)
+
+# Copy WinSparkle.dll next to the executable (required at runtime)
+add_custom_command(TARGET Reflection POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${WINSPARKLE_DLL}"
+        "$<TARGET_FILE_DIR:Reflection>"
+    COMMENT "Copying WinSparkle.dll to build output"
 )
 
 # --------------------------------------------------------------------------

@@ -45,6 +45,9 @@ public:
     bool init(int cmd_show);
     int run();
 
+    /// Access settings for external consumers (e.g., WinSparkle init).
+    [[nodiscard]] const AppSettings& settings() const;
+
 private:
     HINSTANCE instance_;
     HWND message_hwnd_ = nullptr;

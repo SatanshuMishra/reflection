@@ -57,6 +57,7 @@ public:
     static constexpr int kMenuDisconnect = 1001;
     static constexpr int kMenuSettings = 1002;
     static constexpr int kMenuShowWindow = 1003;
+    static constexpr int kMenuCheckUpdates = 1004;
     static constexpr int kMenuQuit = 1005;
 
 private:
