@@ -24,7 +24,6 @@ enum class OverlayButton {
     close,
     maximize,
     minimize,
-    fullscreen,
     aspect_lock,
 };
 
@@ -80,14 +79,12 @@ public:
 
     /// Update display state for button icon changes.
     void set_maximized(bool maximized);
-    void set_fullscreen(bool fullscreen);
     void set_aspect_locked(bool locked);
 
     /// Set callbacks for each button.
     void set_close_callback(ButtonCallback cb);
     void set_minimize_callback(ButtonCallback cb);
     void set_maximize_callback(ButtonCallback cb);
-    void set_fullscreen_callback(ButtonCallback cb);
     void set_aspect_lock_callback(ButtonCallback cb);
 
     /// Get the overlay HWND (for mouse tracking coordination).
@@ -100,7 +97,6 @@ private:
 
     // Button state
     bool is_maximized_ = false;
-    bool is_fullscreen_ = false;
     bool is_aspect_locked_ = false;
     OverlayButton hovered_button_ = OverlayButton::none;
 
@@ -113,7 +109,6 @@ private:
     ButtonCallback on_close_;
     ButtonCallback on_minimize_;
     ButtonCallback on_maximize_;
-    ButtonCallback on_fullscreen_;
     ButtonCallback on_aspect_lock_;
 
     // DPI scaling

@@ -224,10 +224,6 @@ bool MirrorWindow::create_overlay() {
         }
     });
 
-    overlay_->set_fullscreen_callback([this]() {
-        toggle_fullscreen();
-    });
-
     overlay_->set_aspect_lock_callback([this]() {
         toggle_aspect_lock();
     });
@@ -259,7 +255,6 @@ void MirrorWindow::show_overlay() {
     cancel_hide_timer();
     if (overlay_) {
         overlay_->set_maximized(IsZoomed(hwnd_) != 0);
-        overlay_->set_fullscreen(is_fullscreen_);
         overlay_->set_aspect_locked(aspect_locked_);
         overlay_->show();
     }
@@ -472,7 +467,6 @@ void MirrorWindow::enter_fullscreen() {
                  SWP_FRAMECHANGED);
 
     is_fullscreen_ = true;
-    if (overlay_) overlay_->set_fullscreen(true);
     Logger::info("Entered fullscreen");
 }
 
@@ -495,7 +489,6 @@ void MirrorWindow::exit_fullscreen() {
     }
 
     is_fullscreen_ = false;
-    if (overlay_) overlay_->set_fullscreen(false);
     Logger::info("Exited fullscreen");
 }
 
