@@ -367,6 +367,9 @@ target_compile_definitions(Reflection PRIVATE
 # It declares Windows 10/11 compatibility (required for accurate OS version
 # detection by WinSparkle), per-monitor DPI awareness, and UTF-8 code page.
 # Do NOT set VS_DPI_AWARE here — it conflicts with the manifest's dpiAwareness.
+# /MANIFEST:NO prevents the linker from auto-generating a second manifest
+# resource, which would conflict with the one in app.rc (CVT1100 duplicate).
+target_link_options(Reflection PRIVATE "/MANIFEST:NO")
 
 # Copy UI assets (HTML/CSS/JS) next to the executable
 set(UI_ASSETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/assets")
