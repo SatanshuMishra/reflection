@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Reflection Updates</title>
+    <description>Reflection for Windows update feed</description>
+    <language>en</language>
+    <item>
+      <title>Version 1.8.2</title>
+      <sparkle:version>1.8.2</sparkle:version>
+      <sparkle:os>windows-x64</sparkle:os>
+      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
+      <pubDate>Sat, 28 Mar 2026 03:25:28 GMT</pubDate>
+      <enclosure
+        url="https://github.com/SatanshuMishra/reflection/releases/download/v1.8.2/Reflection-1.8.2-Setup.exe"
+        sparkle:edSignature="NvMWTktLfzexVReXO/W6EkFPcFvqZI1P9xDP/GpJx7Zsck4/JOhk0+LGMEjtpM148uKhPlNRrTEGPFiC/wgXAA=="
+        sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"
+        length="31232481"
+        type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>
