@@ -29,6 +29,7 @@ public:
     using ClientConnectedCallback = std::function<void(const AirPlayClientInfo&)>;
     using ClientDisconnectedCallback = std::function<void(const std::string& device_id)>;
     using VideoFrameCallback = std::function<void(const uint8_t* data, size_t size, uint64_t timestamp, uint8_t frame_type)>;
+    using VideoResetCallback = std::function<void()>;
     using AudioFrameCallback = std::function<void(const uint8_t* data, size_t size, uint64_t timestamp)>;
 
     /// Dependency-injected constructor for testability.
@@ -66,6 +67,7 @@ public:
     void set_client_connected_callback(ClientConnectedCallback callback);
     void set_client_disconnected_callback(ClientDisconnectedCallback callback);
     void set_video_frame_callback(VideoFrameCallback callback);
+    void set_video_reset_callback(VideoResetCallback callback);
     void set_audio_frame_callback(AudioFrameCallback callback);
 
 private:
@@ -77,6 +79,7 @@ private:
     ClientConnectedCallback client_connected_cb_;
     ClientDisconnectedCallback client_disconnected_cb_;
     VideoFrameCallback video_frame_cb_;
+    VideoResetCallback video_reset_cb_;
     AudioFrameCallback audio_frame_cb_;
 
     /// Wire stored callbacks to the core via adapter lambdas.

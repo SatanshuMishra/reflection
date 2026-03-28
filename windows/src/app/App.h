@@ -8,10 +8,7 @@
 #endif
 #include <Windows.h>
 
-#include "utilities/SessionDetector.h"
-
 #include <array>
-#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -58,25 +55,17 @@ private:
     std::unique_ptr<ThemeManager> theme_manager_;
     std::unique_ptr<MirrorWindow> mirror_window_;
     std::unique_ptr<AirPlayService> airplay_service_;
-    std::unique_ptr<IGStreamerPipeline> pipeline_;
+    std::shared_ptr<IGStreamerPipeline> pipeline_;
 
     std::mutex connection_mutex_;
     std::optional<std::string> pending_device_name_;
 
-    /// True while a mirror session is actively running (set in on_ipad_connected,
-    /// cleared in cleanup_mirror_session). Guards against stale WM_DESTROY
+    /// True while a mirror window is open. Guards against stale WM_DESTROY
     /// messages from previous mirror windows triggering cascading restarts.
-    /// Atomic because RAOP callback lambdas may access pipeline_ concurrently.
-    std::atomic<bool> mirror_active_ = false;
+    /// Only accessed on the main (UI) thread — not atomic.
+    bool has_active_session_ = false;
 
-    /// Current rendering mode (console = GPU, remote = software).
-    RenderMode current_render_mode_ = RenderMode::kConsole;
-
-    /// When a session transition is detected and the user is prompted,
-    /// the new mode is stored here until the user clicks the balloon.
-    std::optional<RenderMode> pending_render_mode_switch_;
-
-    /// Cached device name for window title during pipeline rebuild.
+    /// Cached device name for window title.
     std::string device_name_cache_;
 
     bool create_message_window();
@@ -88,8 +77,6 @@ private:
     void on_ipad_disconnected();
     void on_mirror_window_closed();
     void on_server_name_changed();
-    void on_session_changed(WPARAM session_event);
-    void rebuild_pipeline_for_mode(RenderMode new_mode);
     void cleanup_mirror_session();
 
     static LRESULT CALLBACK message_wnd_proc(

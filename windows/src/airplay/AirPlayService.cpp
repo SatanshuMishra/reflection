@@ -117,6 +117,10 @@ void AirPlayService::set_video_frame_callback(VideoFrameCallback callback) {
     video_frame_cb_ = std::move(callback);
 }
 
+void AirPlayService::set_video_reset_callback(VideoResetCallback callback) {
+    video_reset_cb_ = std::move(callback);
+}
+
 void AirPlayService::set_audio_frame_callback(AudioFrameCallback callback) {
     audio_frame_cb_ = std::move(callback);
 }
@@ -128,6 +132,11 @@ void AirPlayService::wire_callbacks_to_core() {
             [cb = video_frame_cb_](const AirPlayVideoFrame& frame) {
                 cb(frame.data, frame.size, frame.timestamp, frame.nal_type);
             });
+    }
+
+    // Video reset: stream discontinuity (iPad lock/unlock)
+    if (video_reset_cb_) {
+        core_->set_video_reset_callback(video_reset_cb_);
     }
 
     // Audio: adapt from AirPlayAudioFrame to our (data, size, timestamp) callback

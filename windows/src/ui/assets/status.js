@@ -248,6 +248,10 @@ function setAutoUpdate(enabled) {
     sendToHost({ type: 'setAutoUpdate', enabled: enabled });
 }
 
+function checkForUpdates() {
+    sendToHost({ type: 'checkForUpdates' });
+}
+
 // --- Window Controls ---
 
 function minimizeWindow() {

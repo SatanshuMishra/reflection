@@ -23,6 +23,9 @@ set(TEST_SOURCES
 
     # Milestone 2 tests — native implementations
     mdns/NativeMdnsAdvertiserTests.cpp
+
+    # Integration tests — cross-component callback chains
+    integration/AirPlayPipelineIntegrationTests.cpp
 )
 
 # RPiPlayCore tests only when using RPiPlay backend
@@ -73,7 +76,6 @@ target_sources(ReflectionTests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/capture/CaptureError.cpp
     ${CMAKE_SOURCE_DIR}/src/settings/AppSettings.cpp
     ${CMAKE_SOURCE_DIR}/src/utilities/Logger.cpp
-    ${CMAKE_SOURCE_DIR}/src/utilities/SessionDetector.cpp
     ${CMAKE_SOURCE_DIR}/src/utilities/UpdateChecker.cpp
 
     # Milestone 2 sources — pure C++ logic (no RPiPlay C headers)

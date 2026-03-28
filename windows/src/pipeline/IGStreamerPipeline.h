@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include "utilities/SessionDetector.h"
-
 #include <cstddef>
 #include <cstdint>
 
@@ -28,10 +26,9 @@ public:
     virtual ~IGStreamerPipeline() = default;
 
     /// Initialize the pipeline and attach to the given window handle.
-    /// Creates the GStreamer pipeline elements and configures the videosink
+    /// Creates the GStreamer pipeline elements and configures d3d11videosink
     /// to render into the provided HWND.
-    /// @param mode  Console = d3d11videosink (GPU), Remote = autovideosink (RDP-visible)
-    [[nodiscard]] virtual bool init(HWND window_handle, RenderMode mode) = 0;
+    [[nodiscard]] virtual bool init(HWND window_handle) = 0;
 
     /// Start the pipeline (transitions to PLAYING state).
     virtual void start() = 0;
@@ -54,6 +51,15 @@ public:
     /// @param timestamp NTP timestamp from the sender
     virtual void push_audio_data(const uint8_t* data, size_t size,
                                   uint64_t timestamp) = 0;
+
+    /// Attach the video overlay to a window handle.
+    /// Can be called after init() to set or change the render target.
+    virtual void set_window_handle(HWND window_handle) = 0;
+
+    /// Flush the pipeline and reset decoder state.
+    /// Called when the video stream restarts (e.g., iPad lock/unlock) to clear
+    /// stale reference frames and prevent decode artifacts.
+    virtual void flush_and_reset() = 0;
 
     /// Whether the pipeline is currently in PLAYING state.
     [[nodiscard]] virtual bool is_playing() const = 0;

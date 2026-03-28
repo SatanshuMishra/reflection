@@ -3,32 +3,89 @@
 
 #include "pipeline/GStreamerPipeline.h"
 #include "utilities/Logger.h"
-#include "utilities/SessionDetector.h"
+#include "utilities/WinUtils.h"
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/video/videooverlay.h>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+#include <dxgi1_2.h>
+
+#pragma comment(lib, "dxgi.lib")
+
 #include <atomic>
 #include <cstring>
+#include <string>
 
 namespace reflection {
+
+namespace {
+
+/// Find the first DXGI adapter that is a real hardware GPU, not a virtual
+/// display adapter (RDP, Hyper-V, software renderer). Returns the adapter
+/// index for d3d11videosink's "adapter" property, or -1 if no hardware
+/// adapter is found.
+///
+/// When connected via RDP, DXGI may enumerate the Microsoft Remote Display
+/// Adapter before the physical GPU. d3d11videosink auto-selects the first
+/// adapter, which on RDP may be the virtual one — its swap chain presentation
+/// silently fails (DXGI_STATUS_OCCLUDED). Explicitly selecting the physical
+/// GPU makes rendering work on both console and RDP sessions.
+int find_hardware_adapter_index() {
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
+                                   reinterpret_cast<void**>(&factory)))) {
+        return -1;
+    }
+
+    int result = -1;
+    IDXGIAdapter1* adapter = nullptr;
+    for (UINT i = 0;
+         factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND;
+         ++i) {
+        DXGI_ADAPTER_DESC1 desc{};
+        adapter->GetDesc1(&desc);
+        adapter->Release();
+
+        const bool is_software = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        const std::wstring name(desc.Description);
+
+        Logger::debug("DXGI adapter {}: '{}' (software={}, VRAM={}MB)",
+                      i, win_utils::wide_to_utf8(name), is_software,
+                      desc.DedicatedVideoMemory / (1024 * 1024));
+
+        // Skip virtual/software adapters
+        if (is_software) continue;
+        if (name.find(L"Remote Display") != std::wstring::npos) continue;
+        if (name.find(L"Basic Render") != std::wstring::npos) continue;
+        if (name.find(L"Hyper-V") != std::wstring::npos) continue;
+
+        if (result < 0) {
+            result = static_cast<int>(i);
+        }
+    }
+
+    factory->Release();
+    return result;
+}
+
+} // anonymous namespace
 
 GStreamerPipeline::~GStreamerPipeline() {
     stop();
 }
 
-bool GStreamerPipeline::init(HWND window_handle, RenderMode mode) {
+bool GStreamerPipeline::init(HWND window_handle) {
     if (pipeline_) {
         Logger::warn("GStreamerPipeline::init called when already initialized");
         return true;
     }
 
     window_handle_ = window_handle;
-    render_mode_ = mode;
-
-    Logger::info("GStreamerPipeline::init with render_mode={}",
-                 SessionDetector::render_mode_name(mode));
 
     // Check for hardware decoder availability
     has_hw_decoder_ = probe_hw_decoder();
@@ -114,37 +171,24 @@ bool GStreamerPipeline::build_video_pipeline() {
     // Video convert (needed for SW decode → d3d11videosink format conversion)
     GstElement* videoconvert = gst_element_factory_make("videoconvert", "video-convert");
 
-    // Create video sink based on render mode — no silent fallback.
-    //
-    // Console: d3d11videosink (Direct3D 11 / DXGI — zero-copy GPU rendering)
-    // Remote:  d3dvideosink   (Direct3D 9 — captured by RDP's remoting layer)
-    //
-    // d3dvideosink is used for RDP instead of autovideosink because:
-    // 1. It implements GstVideoOverlay — renders into our MirrorWindow HWND
-    // 2. Direct3D 9 rendering is captured by RDP (unlike DXGI/D3D11)
-    // 3. autovideosink does NOT implement GstVideoOverlay and creates its
-    //    own window, which may not be visible over RDP
-    if (render_mode_ == RenderMode::kConsole) {
-        video_sink_ = gst_element_factory_make("d3d11videosink", "video-sink");
-        if (!video_sink_) {
-            Logger::error("d3d11videosink unavailable in console session -- "
-                           "check GPU drivers and GStreamer installation");
-            return false;
-        }
-        Logger::info("Using d3d11videosink (console/GPU mode)");
+    // d3d11videosink (DXGI) for all sessions — console and RDP.
+    video_sink_ = gst_element_factory_make("d3d11videosink", "video-sink");
+    if (!video_sink_) {
+        Logger::error("d3d11videosink unavailable -- "
+                       "check GPU drivers and GStreamer installation");
+        return false;
+    }
+
+    // Explicitly select the hardware GPU adapter. Under RDP, DXGI may
+    // enumerate the Microsoft Remote Display Adapter first — its swap chain
+    // presentation silently fails. Targeting the physical GPU ensures
+    // rendering works on both console and RDP sessions.
+    const int hw_adapter = find_hardware_adapter_index();
+    if (hw_adapter >= 0) {
+        g_object_set(video_sink_, "adapter", hw_adapter, nullptr);
+        Logger::info("Using d3d11videosink (adapter={})", hw_adapter);
     } else {
-        // Direct3D 9 sink — works over RDP and supports GstVideoOverlay
-        video_sink_ = gst_element_factory_make("d3dvideosink", "video-sink");
-        if (!video_sink_) {
-            Logger::warn("d3dvideosink unavailable -- trying glimagesink");
-            video_sink_ = gst_element_factory_make("glimagesink", "video-sink");
-        }
-        if (!video_sink_) {
-            Logger::error("No RDP-compatible video sink available -- "
-                           "check GStreamer installation");
-            return false;
-        }
-        Logger::info("Using d3dvideosink (remote/RDP mode)");
+        Logger::warn("No hardware DXGI adapter found -- using default adapter");
     }
 
     // Low-latency: don't sync to pipeline clock
@@ -175,12 +219,9 @@ bool GStreamerPipeline::build_video_pipeline() {
         }
     }
 
-    const char* sink_name = (render_mode_ == RenderMode::kConsole)
-        ? "d3d11videosink" : "d3dvideosink";
-    Logger::info("Video pipeline built: appsrc → h264parse → {} → {} → {}",
+    Logger::info("Video pipeline built: appsrc → h264parse → {} → {} → d3d11videosink",
                  has_hw_decoder_ ? "d3d11h264dec" : "avdec_h264",
-                 videoconvert ? "videoconvert" : "(direct)",
-                 sink_name);
+                 videoconvert ? "videoconvert" : "(direct)");
     return true;
 }
 
@@ -280,15 +321,21 @@ void GStreamerPipeline::start() {
     main_loop_ = g_main_loop_new(nullptr, FALSE);
     gst_thread_ = std::thread(&GStreamerPipeline::run_main_loop, this);
 
-    // Transition to PLAYING
+    // Mark as playing BEFORE the state transition — the appsrc is live
+    // (is-live=TRUE) and needs data to complete preroll. The RAOP thread
+    // must be allowed to push frames immediately so the first keyframe
+    // reaches the decoder and preroll completes.
+    playing_.store(true);
+
+    // Transition to PLAYING (async — completes when preroll frame arrives)
     GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_FAILURE) {
         Logger::error("Failed to set GStreamer pipeline to PLAYING state");
+        playing_.store(false);
         return;
     }
 
-    playing_.store(true);
-    Logger::info("GStreamer pipeline started");
+    Logger::info("GStreamer pipeline started (preroll pending)");
 }
 
 void GStreamerPipeline::stop() {
@@ -391,6 +438,38 @@ void GStreamerPipeline::push_audio_data(const uint8_t* data, size_t size,
     gst_app_src_push_buffer(GST_APP_SRC(audio_appsrc_), buffer);
 }
 
+void GStreamerPipeline::set_window_handle(HWND window_handle) {
+    window_handle_ = window_handle;
+    if (video_sink_ && window_handle_ && GST_IS_VIDEO_OVERLAY(video_sink_)) {
+        gst_video_overlay_set_window_handle(
+            GST_VIDEO_OVERLAY(video_sink_),
+            reinterpret_cast<guintptr>(window_handle_));
+        Logger::info("Video overlay HWND updated");
+    }
+}
+
+void GStreamerPipeline::flush_and_reset() {
+    if (!playing_.load() || !pipeline_ || !video_appsrc_) return;
+
+    Logger::info("Flushing video pipeline (stream discontinuity)");
+
+    // Send flush-start + flush-stop through the video appsrc.
+    // This propagates through the entire downstream chain:
+    //   appsrc → h264parse → decoder → sink
+    //
+    // flush-start: drains all queued buffers and resets element state
+    // flush-stop(reset_time=TRUE): resets the running time so the decoder
+    //   accepts new timestamps from the restarted stream
+    //
+    // This clears stale reference frames from the H.264 decoder's DPB
+    // (decoded picture buffer), preventing color artifacts and corruption
+    // when the iPad restarts its video stream after lock/unlock.
+    gst_element_send_event(video_appsrc_,
+                            gst_event_new_flush_start());
+    gst_element_send_event(video_appsrc_,
+                            gst_event_new_flush_stop(TRUE));
+}
+
 bool GStreamerPipeline::is_playing() const {
     return playing_.load();
 }
@@ -432,6 +511,22 @@ int GStreamerPipeline::on_bus_message(void* /*bus_ptr*/, void* msg_ptr, void* us
                 Logger::debug("GStreamer pipeline state: {} → {}",
                              gst_element_state_get_name(old_state),
                              gst_element_state_get_name(new_state));
+
+                // Re-set overlay HWND when the sink reaches PAUSED/PLAYING.
+                // d3d11videosink calls CreateSwapChainForHwnd during
+                // READY→PAUSED — re-applying the handle ensures it targets
+                // the correct child HWND after the swap chain is created.
+                // Safe without a playing_ guard: gst_video_overlay_set_window_handle
+                // is a no-op after GST_STATE_NULL, and stop() joins the GLib thread.
+                if ((new_state == GST_STATE_PAUSED ||
+                     new_state == GST_STATE_PLAYING) &&
+                    self->video_sink_ &&
+                    self->window_handle_ &&
+                    GST_IS_VIDEO_OVERLAY(self->video_sink_)) {
+                    gst_video_overlay_set_window_handle(
+                        GST_VIDEO_OVERLAY(self->video_sink_),
+                        reinterpret_cast<guintptr>(self->window_handle_));
+                }
             }
             break;
         }

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(Reflection
-    VERSION 1.7.0
+    VERSION 1.8.0
     DESCRIPTION "AirPlay iPad screen mirroring for Windows"
     LANGUAGES C CXX
 )
@@ -186,13 +186,13 @@ set(REFLECTION_SOURCES
     src/mdns/MjanssonMdnsAdvertiser.cpp
     src/mdns/NativeMdnsAdvertiser.cpp
     src/views/MirrorWindow.cpp
+    src/views/MirrorOverlay.cpp
     src/views/OnboardingWindow.cpp
     src/views/StatusWindow.cpp
     src/views/OverlayRenderer.cpp
     src/settings/AppSettings.cpp
     src/settings/AutoStartService.cpp
     src/utilities/Logger.cpp
-    src/utilities/SessionDetector.cpp
     src/utilities/UpdateChecker.cpp
     src/utilities/NameGenerator.cpp
     src/ui/WebViewHost.cpp
@@ -276,7 +276,9 @@ target_link_libraries(Reflection PRIVATE
     # Windows system libraries (always needed)
     ws2_32
     iphlpapi
-    wtsapi32
+    gdiplus
+    dwmapi
+    shcore
     ole32
     oleaut32
     uuid
