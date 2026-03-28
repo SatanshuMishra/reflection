@@ -1,3 +1,10 @@
 // Windows application resources for Reflection
+
 // Icon resource — ID 1 is used for the application icon and system tray
 1 ICON "app.ico"
+
+// Application manifest — declares Windows 10/11 compatibility, DPI awareness,
+// and UTF-8 code page. Without this, VerifyVersionInfoW (used by WinSparkle)
+// reports the OS as Windows 8.1, breaking update version detection.
+// CREATEPROCESS_MANIFEST_RESOURCE_ID (1) + RT_MANIFEST (24)
+1 24 "app.manifest"

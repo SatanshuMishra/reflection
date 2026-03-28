@@ -111,11 +111,10 @@ $appcastXml = @"
     <item>
       <title>Version $Version</title>
       <sparkle:version>$Version</sparkle:version>
-      <sparkle:os>windows-x64</sparkle:os>
-      <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
       <pubDate>$pubDate</pubDate>
       <enclosure
         url="$downloadUrl"
+        sparkle:os="windows-x64"
         sparkle:edSignature="$signature"
         sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"
         length="$fileSize"
