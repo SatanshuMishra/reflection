@@ -491,8 +491,8 @@ jobs:
       - name: Prepare appcast for GitHub Pages
         run: |
           mkdir -p pages
-          if [ -f artifacts/windows/appcast.xml ]; then
-            cp artifacts/windows/appcast.xml pages/
+          if [ -f artifacts/appcast.xml ]; then
+            cp artifacts/appcast.xml pages/
             echo "Appcast found and staged for deployment"
           else
             echo "No appcast.xml found -- skipping deployment"
