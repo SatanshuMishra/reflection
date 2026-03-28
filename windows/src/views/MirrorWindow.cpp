@@ -202,7 +202,7 @@ bool MirrorWindow::create_overlay() {
     RECT client{};
     GetClientRect(hwnd_, &client);
 
-    if (!overlay_->create(hwnd_, instance_, device_name_)) {
+    if (!overlay_->create(hwnd_, instance_)) {
         return false;
     }
 
@@ -463,7 +463,9 @@ void MirrorWindow::enter_fullscreen() {
     mi.cbSize = sizeof(mi);
     GetMonitorInfo(monitor, &mi);
 
-    SetWindowPos(hwnd_, HWND_TOP,
+    // HWND_TOPMOST ensures the window covers the taskbar. HWND_TOP alone
+    // may leave the taskbar visible for borderless popup windows.
+    SetWindowPos(hwnd_, HWND_TOPMOST,
                  mi.rcMonitor.left, mi.rcMonitor.top,
                  mi.rcMonitor.right - mi.rcMonitor.left,
                  mi.rcMonitor.bottom - mi.rcMonitor.top,
@@ -481,11 +483,12 @@ void MirrorWindow::exit_fullscreen() {
     SetWindowLong(hwnd_, GWL_STYLE, saved_state_.style);
     SetWindowLong(hwnd_, GWL_EXSTYLE, saved_state_.ex_style);
 
-    SetWindowPos(hwnd_, nullptr,
+    // HWND_NOTOPMOST restores normal z-order after fullscreen.
+    SetWindowPos(hwnd_, HWND_NOTOPMOST,
                  saved_state_.rect.left, saved_state_.rect.top,
                  saved_state_.rect.right - saved_state_.rect.left,
                  saved_state_.rect.bottom - saved_state_.rect.top,
-                 SWP_NOZORDER | SWP_FRAMECHANGED);
+                 SWP_FRAMECHANGED);
 
     if (saved_state_.was_maximized) {
         ShowWindow(hwnd_, SW_MAXIMIZE);

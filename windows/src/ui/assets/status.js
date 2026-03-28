@@ -40,6 +40,10 @@ function handleHostMessage(data) {
             if (typeof data.autoUpdateEnabled === 'boolean') {
                 document.getElementById('toggleAutoUpdate').checked = data.autoUpdateEnabled;
             }
+            if (data.version) {
+                document.getElementById('versionInfo').textContent =
+                    data.version + ' \u2219 Up to date';
+            }
             break;
 
         case 'connected':

@@ -3,6 +3,16 @@
 All notable changes to the Windows version of Reflection are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.8.1] - 2026-03-28
+
+### Added
+- **Session duration stopwatch** — Overlay toolbar now shows a live timer (mm:ss, then h:mm:ss after one hour) instead of the iPad device name.
+- **Version number in Settings** — Version row displays the actual app version with update status (e.g., "1.8.1 ∙ Up to date").
+- **Attribution footer** — "Made with ❤️ and ☕ :)!" at the bottom of the Settings page.
+
+### Fixed
+- **Fullscreen not covering taskbar** — Fullscreen button now uses `HWND_TOPMOST` to ensure the window covers the entire monitor including the taskbar. Previously it only maximized.
+
 ## [1.8.0] - 2026-03-27
 
 ### Fixed

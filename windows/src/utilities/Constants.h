@@ -125,6 +125,10 @@ constexpr uintptr_t kOverlayFadeTimerId = 3;
 constexpr uint32_t kOverlayFadeStepMs = 16;       // ~60fps timer interval
 constexpr uint32_t kOverlayFadeDurationMs = 200;   // Total fade duration
 
+// Session duration stopwatch (1-second tick in overlay)
+constexpr uintptr_t kStopwatchTimerId = 4;
+constexpr uint32_t kStopwatchIntervalMs = 1000;
+
 // Custom message: overlay child reports mouse activity to parent.
 // Uses WM_APP range (0x8000+) for safe inter-window communication.
 // WM_USER (0x0400) is reserved for intra-class use only.
