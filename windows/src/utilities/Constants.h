@@ -199,8 +199,8 @@ constexpr std::string_view kEdDsaPublicKey =
 
 constexpr std::wstring_view kRegKeyAutoUpdateEnabled = L"AutoUpdateEnabled";
 
-// Check for updates every 24 hours (86400 seconds)
-constexpr int kUpdateCheckIntervalSec = 86400;
+// Check for updates every 12 hours (43200 seconds)
+constexpr int kUpdateCheckIntervalSec = 43200;
 
 // --------------------------------------------------------------------------
 // Logging
