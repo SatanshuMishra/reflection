@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(Reflection
-    VERSION 1.8.3
+    VERSION 1.8.4
     DESCRIPTION "AirPlay iPad screen mirroring for Windows"
     LANGUAGES C CXX
 )
