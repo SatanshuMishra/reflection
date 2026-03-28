@@ -3,6 +3,11 @@
 All notable changes to the Windows version of Reflection are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.8.2] - 2026-03-28
+
+### Fixed
+- **Auto-update appcast never deployed to GitHub Pages** — The `deploy-appcast` CI job checked the wrong artifact path (`artifacts/windows/appcast.xml` instead of `artifacts/appcast.xml`). The `cp` never ran, so GitHub Pages served a 404. WinSparkle showed "Update Error" on every check.
+
 ## [1.8.1] - 2026-03-28
 
 ### Added
