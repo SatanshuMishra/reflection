@@ -175,6 +175,7 @@ bool StatusWindow::create(HINSTANCE instance, AppSettings& settings,
         std::string settings_json =
             "{\"type\":\"settingsUpdated\""
             ",\"serverName\":\"" + json_escape(server_name) + "\""
+            ",\"version\":\"" REFLECTION_VERSION "\""
             ",\"theme\":\"" + json_escape(settings_->theme()) + "\""
             ",\"runInBackground\":" + (run_in_bg ? "true" : "false") +
             ",\"launchAtLogin\":" + (launch_login ? "true" : "false") +

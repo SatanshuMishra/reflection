@@ -326,6 +326,14 @@
             background: var(--accent);
             color: #ffffff;
         }
+
+        .settings-footer {
+            text-align: center;
+            padding: 16px 0 8px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+            letter-spacing: 0.3px;
+        }
     </style>
 </head>
 <body>
@@ -492,14 +500,19 @@
                         <div class="setting-info">
                             <div class="setting-label">Version</div>
                             <div class="setting-description" id="versionInfo">
-                                Up to date
+                                Loading...
                             </div>
                         </div>
-                        <button class="check-update-btn" onclick="checkForUpdates()">
+                        <button class="check-update-btn" id="checkUpdateBtn"
+                                onclick="checkForUpdates()">
                             Check for Updates
                         </button>
                     </div>
                 </div>
+            </div>
+
+            <div class="settings-footer">
+                Made with ❤️ and ☕ :)!
             </div>
         </div>
     </div>
