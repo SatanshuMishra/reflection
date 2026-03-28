@@ -5,16 +5,16 @@
     <description>Reflection for Windows update feed</description>
     <language>en</language>
     <item>
-      <title>Version 1.8.2</title>
-      <sparkle:version>1.8.2</sparkle:version>
+      <title>Version 1.8.3</title>
+      <sparkle:version>1.8.3</sparkle:version>
       <sparkle:os>windows-x64</sparkle:os>
       <sparkle:minimumSystemVersion>10.0</sparkle:minimumSystemVersion>
-      <pubDate>Sat, 28 Mar 2026 03:25:28 GMT</pubDate>
+      <pubDate>Sat, 28 Mar 2026 04:09:24 GMT</pubDate>
       <enclosure
-        url="https://github.com/SatanshuMishra/reflection/releases/download/v1.8.2/Reflection-1.8.2-Setup.exe"
-        sparkle:edSignature="NvMWTktLfzexVReXO/W6EkFPcFvqZI1P9xDP/GpJx7Zsck4/JOhk0+LGMEjtpM148uKhPlNRrTEGPFiC/wgXAA=="
+        url="https://github.com/SatanshuMishra/reflection/releases/download/v1.8.3/Reflection-1.8.3-Setup.exe"
+        sparkle:edSignature="KSo9iWftTJpTURfgFiK995+VJq9qbQ9lPB7PhxgsZOFwiN5Z0BCczaTvGYXLHuRdwosGjSIVQf8ksaVtWh+gDw=="
         sparkle:installerArguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"
-        length="31232481"
+        length="31226987"
         type="application/octet-stream" />
     </item>
   </channel>
