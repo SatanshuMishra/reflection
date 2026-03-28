@@ -368,6 +368,9 @@ void StatusWindow::on_message_from_webview(const std::wstring& json_w) {
         settings_->set_auto_update_enabled(enabled);
         win_sparkle_set_automatic_check_for_updates(enabled ? 1 : 0);
         Logger::info("Auto-update: {}", enabled ? "on" : "off");
+    } else if (type == "checkForUpdates") {
+        Logger::info("Manual update check requested from settings");
+        win_sparkle_check_update_with_ui();
     } else if (type == "disconnect") {
         // Forward disconnect request to the main app
         if (message_hwnd_) {

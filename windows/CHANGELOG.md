@@ -15,10 +15,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 - **Custom borderless mirror window** — Replaced the basic Win32 window with a borderless popup featuring resize handles, aspect ratio lock, and fullscreen mode (F11/Escape).
 - **Hover overlay toolbar** — Semi-transparent toolbar with device name and control buttons (Close, Minimize, Maximize, Fullscreen, Aspect Lock) that fades in on mouse hover and auto-hides after 1 second. Rendered with GDI+ and UpdateLayeredWindow for smooth alpha compositing.
 - **Per-monitor DPI awareness** — Mirror window and overlay scale correctly on high-DPI displays.
+- **"Check for Updates" button in Settings** — Manual update check without resetting the automatic 12-hour timer.
 
 ### Changed
 - Unified video rendering to d3d11videosink with explicit hardware GPU adapter selection via DXGI enumeration, replacing the dual-sink RenderMode system. Works correctly for both console and RDP sessions.
 - Removed SessionDetector and WTS session monitoring (no longer needed with unified rendering).
+- Update check interval reduced from 24 hours to 12 hours.
 
 ## [1.7.0] - 2026-03-26
 

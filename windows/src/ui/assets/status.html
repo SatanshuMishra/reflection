@@ -307,6 +307,25 @@
             opacity: 0.6;
             cursor: not-allowed;
         }
+
+        .check-update-btn {
+            padding: 6px 14px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: background-color 0.15s ease, color 0.15s ease;
+        }
+
+        .check-update-btn:hover {
+            background: var(--accent);
+            color: #ffffff;
+        }
     </style>
 </head>
 <body>
@@ -459,7 +478,7 @@
                         <div class="setting-info">
                             <div class="setting-label">Automatic Updates</div>
                             <div class="setting-description">
-                                Check for new versions automatically
+                                Check for new versions every 12 hours
                             </div>
                         </div>
                         <label class="toggle">
@@ -467,6 +486,18 @@
                                    onchange="setAutoUpdate(this.checked)">
                             <span class="toggle-track"></span>
                         </label>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <div class="setting-label">Version</div>
+                            <div class="setting-description" id="versionInfo">
+                                Up to date
+                            </div>
+                        </div>
+                        <button class="check-update-btn" onclick="checkForUpdates()">
+                            Check for Updates
+                        </button>
                     </div>
                 </div>
             </div>
