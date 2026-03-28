@@ -26,7 +26,7 @@ namespace {
 constexpr std::wstring_view kOverlayWindowClass = L"ReflectionMirrorOverlayClass";
 
 // Button count and order (right-to-left): Close, Maximize, Minimize, FullScreen, Lock
-constexpr int kButtonCount = 5;
+constexpr int kButtonCount = 4;
 
 // Icon drawing colors (ARGB)
 constexpr Gdiplus::ARGB kIconColor = 0xFFFFFFFF;       // White
@@ -228,11 +228,6 @@ void MirrorOverlay::set_maximized(bool maximized) {
     if (is_visible()) update_layered_surface();
 }
 
-void MirrorOverlay::set_fullscreen(bool fullscreen) {
-    is_fullscreen_ = fullscreen;
-    if (is_visible()) update_layered_surface();
-}
-
 void MirrorOverlay::set_aspect_locked(bool locked) {
     is_aspect_locked_ = locked;
     if (is_visible()) update_layered_surface();
@@ -248,10 +243,6 @@ void MirrorOverlay::set_minimize_callback(ButtonCallback cb) {
 
 void MirrorOverlay::set_maximize_callback(ButtonCallback cb) {
     on_maximize_ = std::move(cb);
-}
-
-void MirrorOverlay::set_fullscreen_callback(ButtonCallback cb) {
-    on_fullscreen_ = std::move(cb);
 }
 
 void MirrorOverlay::set_aspect_lock_callback(ButtonCallback cb) {
@@ -398,7 +389,6 @@ void MirrorOverlay::draw_buttons(Gdiplus::Graphics& gfx) const {
         OverlayButton::close,
         OverlayButton::maximize,
         OverlayButton::minimize,
-        OverlayButton::fullscreen,
         OverlayButton::aspect_lock,
     };
 
@@ -466,31 +456,6 @@ void MirrorOverlay::draw_button_icon(Gdiplus::Graphics& gfx,
             break;
         }
 
-        case OverlayButton::fullscreen: {
-            const float s = (is_fullscreen_ ? 5.0f : 6.0f) * scale;
-            const float a = 3.0f * scale;
-            if (is_fullscreen_) {
-                gfx.DrawLine(&pen, cx - s, cy - s, cx - s + a, cy - s);
-                gfx.DrawLine(&pen, cx - s, cy - s, cx - s, cy - s + a);
-                gfx.DrawLine(&pen, cx + s, cy - s, cx + s - a, cy - s);
-                gfx.DrawLine(&pen, cx + s, cy - s, cx + s, cy - s + a);
-                gfx.DrawLine(&pen, cx - s, cy + s, cx - s + a, cy + s);
-                gfx.DrawLine(&pen, cx - s, cy + s, cx - s, cy + s - a);
-                gfx.DrawLine(&pen, cx + s, cy + s, cx + s - a, cy + s);
-                gfx.DrawLine(&pen, cx + s, cy + s, cx + s, cy + s - a);
-            } else {
-                gfx.DrawLine(&pen, cx - s, cy - s + a, cx - s, cy - s);
-                gfx.DrawLine(&pen, cx - s, cy - s, cx - s + a, cy - s);
-                gfx.DrawLine(&pen, cx + s - a, cy - s, cx + s, cy - s);
-                gfx.DrawLine(&pen, cx + s, cy - s, cx + s, cy - s + a);
-                gfx.DrawLine(&pen, cx - s, cy + s - a, cx - s, cy + s);
-                gfx.DrawLine(&pen, cx - s, cy + s, cx - s + a, cy + s);
-                gfx.DrawLine(&pen, cx + s - a, cy + s, cx + s, cy + s);
-                gfx.DrawLine(&pen, cx + s, cy + s, cx + s, cy + s - a);
-            }
-            break;
-        }
-
         case OverlayButton::aspect_lock: {
             const Gdiplus::ARGB icon_color = is_aspect_locked_
                 ? kIconColor : kIconColorDim;
@@ -539,8 +504,7 @@ int MirrorOverlay::button_index(OverlayButton button) const {
         case OverlayButton::close:       return 0;
         case OverlayButton::maximize:    return 1;
         case OverlayButton::minimize:    return 2;
-        case OverlayButton::fullscreen:  return 3;
-        case OverlayButton::aspect_lock: return 4;
+        case OverlayButton::aspect_lock: return 3;
         default:                         return -1;
     }
 }
@@ -565,7 +529,6 @@ OverlayButton MirrorOverlay::hit_test(int x, int y) const {
         OverlayButton::close,
         OverlayButton::maximize,
         OverlayButton::minimize,
-        OverlayButton::fullscreen,
         OverlayButton::aspect_lock,
     };
 
@@ -690,9 +653,6 @@ LRESULT MirrorOverlay::handle_message(HWND hwnd, UINT msg,
                     break;
                 case OverlayButton::maximize:
                     if (on_maximize_) on_maximize_();
-                    break;
-                case OverlayButton::fullscreen:
-                    if (on_fullscreen_) on_fullscreen_();
                     break;
                 case OverlayButton::aspect_lock:
                     if (on_aspect_lock_) on_aspect_lock_();
