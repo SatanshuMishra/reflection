@@ -8,6 +8,7 @@
 #endif
 #include <Windows.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -60,8 +61,7 @@ public:
     /// @param parent       Owner MirrorWindow HWND
     /// @param instance     Application HINSTANCE
     /// @param device_name  Name of the mirrored device (e.g., "iPad Air")
-    [[nodiscard]] bool create(HWND parent, HINSTANCE instance,
-                               const std::wstring& device_name);
+    [[nodiscard]] bool create(HWND parent, HINSTANCE instance);
 
     /// Destroy the overlay window.
     void destroy();
@@ -96,7 +96,7 @@ public:
 private:
     HWND hwnd_ = nullptr;
     HWND parent_ = nullptr;
-    std::wstring device_name_;
+    std::chrono::steady_clock::time_point session_start_{};
 
     // Button state
     bool is_maximized_ = false;
@@ -122,7 +122,7 @@ private:
     // Rendering — layered window with per-pixel alpha (UpdateLayeredWindow)
     void update_layered_surface();
     void paint_to_graphics(Gdiplus::Graphics& gfx, int w, int h) const;
-    void draw_device_name(Gdiplus::Graphics& gfx) const;
+    void draw_session_timer(Gdiplus::Graphics& gfx) const;
     void draw_buttons(Gdiplus::Graphics& gfx) const;
     void draw_button_icon(Gdiplus::Graphics& gfx, OverlayButton button,
                            const RECT& btn_rect) const;

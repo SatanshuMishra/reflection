@@ -14,8 +14,10 @@
 #include <gdiplus.h>
 #include <windowsx.h>  // GET_X_LPARAM, GET_Y_LPARAM
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cwchar>
 
 namespace reflection {
 
@@ -70,10 +72,9 @@ int MirrorOverlay::scaled_button_width() const {
 // Window Lifecycle
 // ---------------------------------------------------------------------------
 
-bool MirrorOverlay::create(HWND parent, HINSTANCE instance,
-                            const std::wstring& device_name) {
+bool MirrorOverlay::create(HWND parent, HINSTANCE instance) {
     parent_ = parent;
-    device_name_ = device_name;
+    session_start_ = std::chrono::steady_clock::now();
 
     WNDCLASSEX wc{};
     wc.cbSize = sizeof(WNDCLASSEX);
@@ -121,12 +122,17 @@ bool MirrorOverlay::create(HWND parent, HINSTANCE instance,
         return false;
     }
 
+    // Start the 1-second stopwatch timer for session duration display
+    SetTimer(hwnd_, constants::kStopwatchTimerId,
+             constants::kStopwatchIntervalMs, nullptr);
+
     // Start hidden — shown on mouse hover via show()
     return true;
 }
 
 void MirrorOverlay::destroy() {
     if (hwnd_ && IsWindow(hwnd_)) {
+        KillTimer(hwnd_, constants::kStopwatchTimerId);
         KillTimer(hwnd_, constants::kOverlayFadeTimerId);
         DestroyWindow(hwnd_);
     }
@@ -345,23 +351,23 @@ void MirrorOverlay::paint_to_graphics(Gdiplus::Graphics& gfx,
                         constants::kOverlayBgB));
     gfx.FillRectangle(&bg_brush, 0, 0, w, h);
 
-    draw_device_name(gfx);
+    draw_session_timer(gfx);
     draw_buttons(gfx);
 }
 
-void MirrorOverlay::draw_device_name(Gdiplus::Graphics& gfx) const {
+void MirrorOverlay::draw_session_timer(Gdiplus::Graphics& gfx) const {
     const float scale = dpi_scale();
 
     const Gdiplus::FontFamily family(L"Segoe UI");
     const Gdiplus::Font font(&family,
         constants::kOverlayTextSize * scale,
         Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-    const Gdiplus::SolidBrush text_brush(Gdiplus::Color(255, 255, 255, 255));
+    // Slightly dimmed white for the timer (less prominent than device name was)
+    const Gdiplus::SolidBrush text_brush(Gdiplus::Color(200, 255, 255, 255));
 
     Gdiplus::StringFormat fmt;
     fmt.SetAlignment(Gdiplus::StringAlignmentNear);
     fmt.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-    fmt.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
 
     const float padding = constants::kOverlayPaddingX * scale;
     const float buttons_w = kButtonCount * constants::kOverlayButtonWidth * scale;
@@ -370,9 +376,21 @@ void MirrorOverlay::draw_device_name(Gdiplus::Graphics& gfx) const {
         static_cast<Gdiplus::REAL>(width_) - buttons_w - padding * 2.0f,
         static_cast<Gdiplus::REAL>(scaled_overlay_height()));
 
-    gfx.DrawString(device_name_.c_str(),
-                    static_cast<int>(device_name_.size()),
-                    &font, text_rect, &fmt, &text_brush);
+    // Calculate elapsed session duration
+    const auto elapsed = std::chrono::steady_clock::now() - session_start_;
+    const auto total_sec = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+    const int hours = static_cast<int>(total_sec / 3600);
+    const int minutes = static_cast<int>((total_sec % 3600) / 60);
+    const int seconds = static_cast<int>(total_sec % 60);
+
+    wchar_t time_str[16]{};
+    if (hours > 0) {
+        std::swprintf(time_str, std::size(time_str), L"%d:%02d:%02d", hours, minutes, seconds);
+    } else {
+        std::swprintf(time_str, std::size(time_str), L"%02d:%02d", minutes, seconds);
+    }
+
+    gfx.DrawString(time_str, -1, &font, text_rect, &fmt, &text_brush);
 }
 
 void MirrorOverlay::draw_buttons(Gdiplus::Graphics& gfx) const {
@@ -610,6 +628,13 @@ LRESULT MirrorOverlay::handle_message(HWND hwnd, UINT msg,
                     if (current_alpha_ == 0) {
                         ShowWindow(hwnd_, SW_HIDE);
                     }
+                }
+                return 0;
+            }
+            if (wp == constants::kStopwatchTimerId) {
+                // Repaint the overlay to update the session timer display
+                if (current_alpha_ > 0) {
+                    update_layered_surface();
                 }
                 return 0;
             }
