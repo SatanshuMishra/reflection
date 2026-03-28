@@ -363,10 +363,10 @@ target_compile_definitions(Reflection PRIVATE
     REFLECTION_VERSION="${CMAKE_PROJECT_VERSION}"
 )
 
-# Application manifest for DPI awareness and UTF-8
-set_target_properties(Reflection PROPERTIES
-    VS_DPI_AWARE "PerMonitor"
-)
+# Application manifest is embedded via app.rc → app.manifest.
+# It declares Windows 10/11 compatibility (required for accurate OS version
+# detection by WinSparkle), per-monitor DPI awareness, and UTF-8 code page.
+# Do NOT set VS_DPI_AWARE here — it conflicts with the manifest's dpiAwareness.
 
 # Copy UI assets (HTML/CSS/JS) next to the executable
 set(UI_ASSETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/assets")
